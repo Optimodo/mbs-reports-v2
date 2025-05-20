@@ -3,13 +3,12 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 import json
-import plotly.express as px
-import plotly.graph_objects as go
 from config import *
 import re
 import time
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
+import openpyxl.styles
 
 class DocumentRegisterProcessor:
     def __init__(self):
@@ -174,288 +173,6 @@ class DocumentRegisterProcessor:
         }
         self.save_history()
 
-    def generate_weekly_summary(self):
-        """Generate a weekly summary report"""
-        # Get all processed data files
-        data_files = list(self.data_dir.glob("*.parquet"))
-        
-        if not data_files:
-            print("No processed data files found.")
-            return
-
-        # Find the most recent version of each file
-        latest_files = {}
-        for data_file in data_files:
-            file_name = data_file.stem
-            date_file = self.data_dir / f"{file_name}.date"
-            
-            if date_file.exists():
-                with open(date_file, 'r') as f:
-                    file_date = datetime.fromisoformat(f.read().strip())
-                
-                if file_name not in latest_files or file_date > latest_files[file_name][1]:
-                    latest_files[file_name] = (data_file, file_date)
-
-        # Use only the most recent version of each file
-        latest_data_files = [f[0] for f in latest_files.values()]
-        
-        # Combine all data from the most recent files
-        all_data = pd.concat([pd.read_parquet(f) for f in latest_data_files])
-        
-        # Create summary statistics
-        summary = {
-            'total_documents': len(all_data),
-            'revision_counts': all_data['Rev'].value_counts().to_dict(),
-            'status_counts': all_data['Status'].value_counts().to_dict(),
-            'type_counts': all_data['Type'].value_counts().to_dict(),
-            'publisher_counts': all_data['Publisher'].value_counts().to_dict(),
-            'documents_by_date': all_data['Date (WET)'].value_counts().sort_index().to_dict()
-        }
-
-        # Generate visualizations
-        self._generate_visualizations(all_data)
-
-        # Save summary to Excel
-        self._save_summary_to_excel(summary, all_data)
-
-        # Generate changes report
-        self._generate_changes_report()
-
-        return summary
-
-    def _generate_changes_report(self):
-        """Generate a detailed changes report"""
-        if not self.latest_changes:
-            return
-
-        # Create HTML report
-        html_content = """
-        <html>
-        <head>
-            <title>Document Register Changes Report</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                h1, h2 {{ color: #333; }}
-                .change-section {{ margin: 20px 0; }}
-                .change-item {{ margin: 10px 0; padding: 10px; background-color: #f5f5f5; }}
-                .change-details {{ margin-left: 20px; }}
-            </style>
-        </head>
-        <body>
-            <h1>Document Register Changes Report</h1>
-            <p>Generated on: {}</p>
-        """.format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-
-        for file_name, changes in self.latest_changes.items():
-            html_content += f"<h2>Changes in {file_name}</h2>"
-            
-            if 'status_changes' in changes and changes['status_changes']:
-                html_content += "<div class='change-section'>"
-                html_content += "<h3>Status Changes</h3>"
-                for change in changes['status_changes']:
-                    html_content += f"""
-                    <div class='change-item'>
-                        <strong>{change['doc_ref']} - {change['doc_title']}</strong>
-                        <div class='change-details'>
-                            Status: {change['old_status']} → {change['new_status']}
-                        </div>
-                    </div>
-                    """
-                html_content += "</div>"
-
-            if 'revision_changes' in changes and changes['revision_changes']:
-                html_content += "<div class='change-section'>"
-                html_content += "<h3>Revision Changes</h3>"
-                for change in changes['revision_changes']:
-                    html_content += f"""
-                    <div class='change-item'>
-                        <strong>{change['doc_ref']} - {change['doc_title']}</strong>
-                        <div class='change-details'>
-                            Revision: {change['old_rev']} → {change['new_rev']}
-                        </div>
-                    </div>
-                    """
-                html_content += "</div>"
-
-            if 'date_changes' in changes and changes['date_changes']:
-                html_content += "<div class='change-section'>"
-                html_content += "<h3>Date Changes</h3>"
-                for change in changes['date_changes']:
-                    html_content += f"""
-                    <div class='change-item'>
-                        <strong>{change['doc_ref']} - {change['doc_title']}</strong>
-                        <div class='change-details'>
-                            Date: {change['old_date']} → {change['new_date']}
-                        </div>
-                    </div>
-                    """
-                html_content += "</div>"
-
-            if 'new_documents' in changes and changes['new_documents']:
-                html_content += "<div class='change-section'>"
-                html_content += "<h3>New Documents</h3>"
-                for doc_ref in changes['new_documents']:
-                    html_content += f"<div class='change-item'>{doc_ref}</div>"
-                html_content += "</div>"
-
-            if 'removed_documents' in changes and changes['removed_documents']:
-                html_content += "<div class='change-section'>"
-                html_content += "<h3>Removed Documents</h3>"
-                for doc_ref in changes['removed_documents']:
-                    html_content += f"<div class='change-item'>{doc_ref}</div>"
-                html_content += "</div>"
-
-        html_content += """
-        </body>
-        </html>
-        """
-
-        # Save HTML report
-        with open(self.reports_dir / 'changes_report.html', 'w') as f:
-            f.write(html_content)
-
-    def _generate_visualizations(self, df):
-        """Generate and save visualizations"""
-        # Revision distribution
-        rev_counts = df['Rev'].value_counts().reset_index()
-        rev_counts.columns = ['Revision', 'Count']
-        fig_rev = px.bar(
-            rev_counts,
-            x='Revision',
-            y='Count',
-            title='Document Distribution by Revision'
-        )
-        fig_rev.write_html(self.reports_dir / 'revision_distribution.html')
-
-        # Status distribution
-        fig_status = px.pie(
-            df,
-            names='Status',
-            title='Document Distribution by Status'
-        )
-        fig_status.write_html(self.reports_dir / 'status_distribution.html')
-
-        # Type distribution
-        type_counts = df['Type'].value_counts().reset_index()
-        type_counts.columns = ['Type', 'Count']
-        fig_type = px.bar(
-            type_counts,
-            x='Type',
-            y='Count',
-            title='Document Distribution by Type'
-        )
-        fig_type.write_html(self.reports_dir / 'type_distribution.html')
-
-        # Publisher distribution
-        publisher_counts = df['Publisher'].value_counts().reset_index()
-        publisher_counts.columns = ['Publisher', 'Count']
-        fig_publisher = px.bar(
-            publisher_counts,
-            x='Publisher',
-            y='Count',
-            title='Document Distribution by Publisher'
-        )
-        fig_publisher.write_html(self.reports_dir / 'publisher_distribution.html')
-
-    def _save_summary_to_excel(self, summary, df):
-        """Save summary statistics to Excel"""
-        with pd.ExcelWriter(self.reports_dir / 'weekly_summary.xlsx') as writer:
-            # Summary sheet
-            summary_df = pd.DataFrame([
-                {'Metric': 'Total Documents', 'Value': summary['total_documents']},
-                {'Metric': 'Unique Revisions', 'Value': len(summary['revision_counts'])},
-                {'Metric': 'Unique Statuses', 'Value': len(summary['status_counts'])},
-                {'Metric': 'Unique Types', 'Value': len(summary['type_counts'])},
-                {'Metric': 'Unique Publishers', 'Value': len(summary['publisher_counts'])}
-            ])
-            summary_df.to_excel(writer, sheet_name='Summary', index=False)
-
-            # Revision counts
-            pd.DataFrame.from_dict(summary['revision_counts'], orient='index', columns=['Count']).to_excel(
-                writer, sheet_name='Revision Counts'
-            )
-
-            # Status counts
-            pd.DataFrame.from_dict(summary['status_counts'], orient='index', columns=['Count']).to_excel(
-                writer, sheet_name='Status Counts'
-            )
-
-            # Type counts
-            pd.DataFrame.from_dict(summary['type_counts'], orient='index', columns=['Count']).to_excel(
-                writer, sheet_name='Type Counts'
-            )
-
-            # Publisher counts
-            pd.DataFrame.from_dict(summary['publisher_counts'], orient='index', columns=['Count']).to_excel(
-                writer, sheet_name='Publisher Counts'
-            )
-
-            # Documents by date
-            pd.DataFrame.from_dict(summary['documents_by_date'], orient='index', columns=['Count']).to_excel(
-                writer, sheet_name='Documents by Date'
-            )
-
-            # Changes sheet
-            if self.latest_changes:
-                changes_data = []
-                for file_name, changes in self.latest_changes.items():
-                    if 'status_changes' in changes:
-                        for change in changes['status_changes']:
-                            changes_data.append({
-                                'File': file_name,
-                                'Document': change['doc_ref'],
-                                'Title': change['doc_title'],
-                                'Change Type': 'Status',
-                                'Old Value': change['old_status'],
-                                'New Value': change['new_status']
-                            })
-                    if 'revision_changes' in changes:
-                        for change in changes['revision_changes']:
-                            changes_data.append({
-                                'File': file_name,
-                                'Document': change['doc_ref'],
-                                'Title': change['doc_title'],
-                                'Change Type': 'Revision',
-                                'Old Value': change['old_rev'],
-                                'New Value': change['new_rev']
-                            })
-                    if 'date_changes' in changes:
-                        for change in changes['date_changes']:
-                            changes_data.append({
-                                'File': file_name,
-                                'Document': change['doc_ref'],
-                                'Title': change['doc_title'],
-                                'Change Type': 'Date',
-                                'Old Value': change['old_date'],
-                                'New Value': change['new_date']
-                            })
-                    if 'new_documents' in changes:
-                        for doc_ref in changes['new_documents']:
-                            changes_data.append({
-                                'File': file_name,
-                                'Document': doc_ref,
-                                'Title': '',
-                                'Change Type': 'New Document',
-                                'Old Value': '',
-                                'New Value': ''
-                            })
-                    if 'removed_documents' in changes:
-                        for doc_ref in changes['removed_documents']:
-                            changes_data.append({
-                                'File': file_name,
-                                'Document': doc_ref,
-                                'Title': '',
-                                'Change Type': 'Removed Document',
-                                'Old Value': '',
-                                'New Value': ''
-                            })
-                
-                if changes_data:
-                    pd.DataFrame(changes_data).to_excel(writer, sheet_name='Changes', index=False)
-
-            # Raw data
-            df.to_excel(writer, sheet_name='Raw Data', index=False)
-
 def get_file_timestamp(file_path):
     """Get the timestamp from cell B4 of the Excel file"""
     try:
@@ -549,78 +266,15 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
                     book.remove(book['Changes'])
                 
                 with pd.ExcelWriter(output_file, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                    # Save changes sheet (it's new since we removed the old one)
+                    # Save sheets in the desired order
                     changes_df.to_excel(writer, sheet_name='Changes', index=False)
-                    
-                    # Save latest data sheet
+                    summary_df.to_excel(writer, sheet_name='Summary Data', index=False)
                     latest_data_df.to_excel(writer, sheet_name='Latest Data', index=False)
-                    
-                    # Get existing summary sheet
-                    if 'Summary' in book.sheetnames:
-                        # Read existing summary
-                        existing_summary = pd.read_excel(output_file, sheet_name='Summary')
-                        # Combine with new data
-                        combined_summary = pd.concat([existing_summary, summary_df]).drop_duplicates(subset=['Date', 'Time'], keep='last')
-                        
-                        # Get the existing sheet
-                        summary_sheet = book['Summary']
-                        
-                        # Store existing column widths
-                        column_widths = {}
-                        for col in summary_sheet.column_dimensions:
-                            column_widths[col] = summary_sheet.column_dimensions[col].width
-                        
-                        # Store existing row heights
-                        row_heights = {}
-                        for row in summary_sheet.row_dimensions:
-                            row_heights[row] = summary_sheet.row_dimensions[row].height
-                        
-                        # Store existing cell formats
-                        cell_formats = {}
-                        for row in summary_sheet.iter_rows():
-                            for cell in row:
-                                if cell.has_style:
-                                    cell_formats[cell.coordinate] = {
-                                        'font': cell.font,
-                                        'fill': cell.fill,
-                                        'border': cell.border,
-                                        'alignment': cell.alignment,
-                                        'number_format': cell.number_format
-                                    }
-                        
-                        # Save combined summary
-                        combined_summary.to_excel(writer, sheet_name='Summary', index=False)
-                        
-                        # Get the new sheet
-                        new_summary_sheet = book['Summary']
-                        
-                        # Restore column widths
-                        for col, width in column_widths.items():
-                            if width is not None:
-                                new_summary_sheet.column_dimensions[col].width = width
-                        
-                        # Restore row heights
-                        for row, height in row_heights.items():
-                            if height is not None:
-                                new_summary_sheet.row_dimensions[row].height = height
-                        
-                        # Restore cell formats
-                        for coord, formats in cell_formats.items():
-                            if coord in new_summary_sheet:
-                                cell = new_summary_sheet[coord]
-                                cell.font = formats['font']
-                                cell.fill = formats['fill']
-                                cell.border = formats['border']
-                                cell.alignment = formats['alignment']
-                                cell.number_format = formats['number_format']
-                    else:
-                        # If no existing summary, save new one
-                        summary_df.to_excel(writer, sheet_name='Summary', index=False)
             except FileNotFoundError:
                 # If file doesn't exist, create new one
                 with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
                     changes_df.to_excel(writer, sheet_name='Changes', index=False)
+                    summary_df.to_excel(writer, sheet_name='Summary Data', index=False)
                     latest_data_df.to_excel(writer, sheet_name='Latest Data', index=False)
             
             # Add highlighting to changes
@@ -644,7 +298,7 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
                                     row[idx].fill = yellow_fill
             
             # Auto-adjust column widths for all sheets
-            for sheet_name in ['Summary', 'Changes', 'Latest Data']:
+            for sheet_name in ['Summary Data', 'Changes', 'Latest Data']:
                 sheet = book[sheet_name]
                 for column in sheet.columns:
                     max_length = 0
@@ -657,6 +311,111 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
                             pass
                     adjusted_width = (max_length + 2)
                     sheet.column_dimensions[column_letter].width = adjusted_width
+            
+            # Create or update Overall Summary sheet first
+            if 'Overall Summary' in book.sheetnames:
+                book.remove(book['Overall Summary'])
+            overall_summary = book.create_sheet('Overall Summary', 0)  # Create at index 0 (first position)
+            
+            # Add title
+            overall_summary['A1'] = 'Document Register Overall Summary'
+            overall_summary['A1'].font = openpyxl.styles.Font(size=14, bold=True)
+            
+            # Add timestamp
+            overall_summary['A2'] = f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+            overall_summary['A2'].font = openpyxl.styles.Font(italic=True)
+            
+            # Get the latest data from Summary Data
+            summary_data = pd.read_excel(output_file, sheet_name='Summary Data')
+            latest_row = summary_data.iloc[-1]  # Get the last row
+            
+            # Get all column names from Summary Data
+            all_columns = summary_data.columns.tolist()
+            
+            # Add total documents
+            overall_summary['A4'] = 'Total Documents:'
+            # Get total from Latest Data sheet
+            latest_data = pd.read_excel(output_file, sheet_name='Latest Data')
+            total_docs = len(latest_data)  # len() already gives us the correct count
+            overall_summary['B4'] = total_docs
+            overall_summary['B4'].font = openpyxl.styles.Font(bold=True)
+            
+            # Filter and sort revision columns
+            rev_columns = [col for col in all_columns if col.startswith('Rev_')]
+            rev_columns.sort(key=lambda x: (
+                # Sort P revisions first
+                (0 if x.startswith('Rev_P') else 1),
+                # Then sort by number
+                int(x.split('_')[1][1:]) if x.split('_')[1][1:].isdigit() else float('inf'),
+                # Then sort alphabetically
+                x
+            ))
+            
+            # Filter and sort status columns
+            status_columns = [col for col in all_columns if col.startswith('Status_')]
+            status_columns.sort()
+            
+            # Add revision summary section
+            overall_summary['A6'] = 'Revision Summary'
+            overall_summary['A6'].font = openpyxl.styles.Font(bold=True, size=12)
+            
+            # Add revision headers
+            overall_summary['A7'] = 'Revision'
+            overall_summary['B7'] = 'Count'
+            overall_summary['A7'].font = openpyxl.styles.Font(bold=True)
+            overall_summary['B7'].font = openpyxl.styles.Font(bold=True)
+            
+            # Add revision data (starting from row 8)
+            row = 8
+            for rev_col in rev_columns:
+                rev_name = rev_col.replace('Rev_', '')
+                overall_summary[f'A{row}'] = rev_name
+                overall_summary[f'B{row}'] = latest_row.get(rev_col, 0)
+                row += 1
+            
+            # Add status summary section
+            status_start_row = row + 2
+            overall_summary[f'A{status_start_row}'] = 'Status Summary'
+            overall_summary[f'A{status_start_row}'].font = openpyxl.styles.Font(bold=True, size=12)
+            
+            # Add status headers
+            overall_summary[f'A{status_start_row + 1}'] = 'Status'
+            overall_summary[f'B{status_start_row + 1}'] = 'Count'
+            overall_summary[f'A{status_start_row + 1}'].font = openpyxl.styles.Font(bold=True)
+            overall_summary[f'B{status_start_row + 1}'].font = openpyxl.styles.Font(bold=True)
+            
+            # Add status data
+            row = status_start_row + 2
+            for status_col in status_columns:
+                status_name = status_col.replace('Status_', '')
+                overall_summary[f'A{row}'] = status_name
+                overall_summary[f'B{row}'] = latest_row.get(status_col, 0)
+                row += 1
+            
+            # Add borders and formatting
+            for row in range(1, row):
+                for col in ['A', 'B']:
+                    cell = overall_summary[f'{col}{row}']
+                    cell.border = openpyxl.styles.Border(
+                        left=openpyxl.styles.Side(style='thin'),
+                        right=openpyxl.styles.Side(style='thin'),
+                        top=openpyxl.styles.Side(style='thin'),
+                        bottom=openpyxl.styles.Side(style='thin')
+                    )
+                    cell.alignment = openpyxl.styles.Alignment(horizontal='left', vertical='center')
+            
+            # Auto-adjust column widths for Overall Summary
+            for column in overall_summary.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = (max_length + 2)
+                overall_summary.column_dimensions[column_letter].width = adjusted_width
             
             book.save(output_file)
             return True
