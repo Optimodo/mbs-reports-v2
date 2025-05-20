@@ -7,8 +7,134 @@ from config import *
 import re
 import time
 from openpyxl import load_workbook
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 import openpyxl.styles
+
+# Overall Summary Sheet Style Configuration
+OVERALL_SUMMARY_STYLES = {
+    'title': {
+        'font': Font(name='Calibri', size=14, bold=True, color='000000'),
+        'alignment': Alignment(horizontal='left', vertical='center'),
+        'fill': PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+    },
+    'timestamp': {
+        'font': Font(name='Calibri', size=11, italic=True, color='000000'),
+        'alignment': Alignment(horizontal='left', vertical='center'),
+        'fill': PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+    },
+    'section_header': {
+        'font': Font(name='Calibri', size=12, bold=True, color='000000'),
+        'alignment': Alignment(horizontal='left', vertical='center'),
+        'fill': PatternFill(start_color='F0F0F0', end_color='F0F0F0', fill_type='solid')
+    },
+    'column_header': {
+        'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+        'alignment': Alignment(horizontal='left', vertical='center'),
+        'fill': PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
+    },
+    'data_cell': {
+        'font': Font(name='Calibri', size=11, color='000000'),
+        'alignment': Alignment(horizontal='left', vertical='center'),
+        'fill': PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+    },
+    'total_cell': {
+        'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+        'alignment': Alignment(horizontal='left', vertical='center'),
+        'fill': PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+    },
+    'border': Border(
+        left=Side(style='thin', color='000000'),
+        right=Side(style='thin', color='000000'),
+        top=Side(style='thin', color='000000'),
+        bottom=Side(style='thin', color='000000')
+    )
+}
+
+# Status-based conditional formatting
+STATUS_STYLES = {
+    'STATUS A': {
+        'search_terms': ['A - Authorized and Accepted', 'Accepted', 'A', 'A - Proceed', 'A - Proceed (Lead Reviewer)'],
+        'style': {
+            'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+            'fill': PatternFill(start_color='25E82C', end_color='25E82C', fill_type='solid')
+        }
+    },
+    'STATUS B': {
+        'search_terms': ['B - Partial Sign Off (with comment)', 'Accepted with Comments', 'B', 'B - Proceed with Comments', 'B - Proceed with Comments (Lead Reviewer)'],
+        'style': {
+            'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+            'fill': PatternFill(start_color='EDDDA1', end_color='EDDDA1', fill_type='solid')
+        }
+    },
+    'STATUS C': {
+        'search_terms': ['Rejected', 'QA - Rejected', 'C - Rejected', 'QA Rejected', 'C', 'C - Rejected (Lead Reviewer)', 'C-Rejected',],
+        'style': {
+            'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+            'fill': PatternFill(start_color='ED1111', end_color='ED1111', fill_type='solid')
+        }
+    },
+    'INFORMATION': {
+        'search_terms': ['Information', 'Withdrawn-Obsolete', 'QA Passed', 'QA - Passed', 'For Status Change', 'For Commenting', 'Awaiting QC Check', 'QC Accepted', 'QC Checked', 'Under Review'],
+        'style': {
+            'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+            'fill': PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+        }
+    },
+    'REVIEWED': {
+        'search_terms': ['Reviewed'],
+        'style': {
+            'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+            'fill': PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+        }
+    },
+    'PUBLISHED': {
+        'search_terms': ['Published'],
+        'style': {
+            'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+            'fill': PatternFill(start_color='67DBB5', end_color='67DBB5', fill_type='solid')
+        }
+    },
+    'SHARED': {
+        'search_terms': ['Shared'],
+        'style': {
+            'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+            'fill': PatternFill(start_color='E0F090', end_color='E0F090', fill_type='solid')
+        }
+    },
+    # 'SUBMITTED': {
+    #     'search_terms': ['H - Submitted', 'H - For Review'],
+    #     'style': {
+    #         'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+    #         'fill': PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+    #     }
+    # },
+    # 'COMPLETED': {
+    #     'search_terms': ['I - Completed', 'I - Final'],
+    #     'style': {
+    #         'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+    #         'fill': PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+    #     }
+    # }
+}
+
+def apply_status_style(cell, status_name):
+    """Apply conditional formatting based on status name"""
+    for style_config in STATUS_STYLES.values():
+        if any(term == status_name for term in style_config['search_terms']):
+            cell.font = style_config['style']['font']
+            cell.fill = style_config['style']['fill']
+            return style_config['style']  # Return the style config for reuse
+    # If no matching style found, use default data cell style
+    cell.font = OVERALL_SUMMARY_STYLES['data_cell']['font']
+    cell.fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
+    return OVERALL_SUMMARY_STYLES['data_cell']  # Return default style
+
+# Example of how to use these styles in the code:
+# cell = overall_summary['A1']
+# cell.font = OVERALL_SUMMARY_STYLES['title']['font']
+# cell.alignment = OVERALL_SUMMARY_STYLES['title']['alignment']
+# cell.fill = OVERALL_SUMMARY_STYLES['title']['fill']
+# cell.border = OVERALL_SUMMARY_STYLES['border']
 
 class DocumentRegisterProcessor:
     def __init__(self):
@@ -49,15 +175,22 @@ class DocumentRegisterProcessor:
             timestamp_df = pd.read_excel(file_path, usecols="B", nrows=4, header=None)
             timestamp_str = timestamp_df.iloc[3, 0]  # Get value from B4
             
-            # Extract the date from the timestamp string
+            # Extract the date and time from the timestamp string
             try:
-                # Look for date pattern like "20-May-2025"
-                import re
-                date_match = re.search(r'\d{1,2}-[A-Za-z]{3}-\d{4}', timestamp_str)
-                if date_match:
-                    file_date = datetime.strptime(date_match.group(), '%d-%b-%Y')
+                # Split by commas and get the third part (date and time)
+                parts = timestamp_str.split(',')
+                if len(parts) >= 3:
+                    date_time_part = parts[2].strip()
+                    # Split by space to separate date and time
+                    date_time = date_time_part.split()
+                    if len(date_time) >= 2:
+                        file_date = datetime.strptime(date_time[0], '%d-%b-%Y')
+                        file_time = datetime.strptime(date_time[1], '%H:%M').time()
+                    else:
+                        print(f"Warning: Could not parse date/time from {file_name}")
+                        file_date = datetime.min
                 else:
-                    print(f"Warning: Could not parse date from timestamp in {file_name}")
+                    print(f"Warning: Could not parse timestamp in {file_name}")
                     file_date = datetime.min
             except Exception as e:
                 print(f"Warning: Error parsing date from {file_name}: {str(e)}")
@@ -180,15 +313,18 @@ def get_file_timestamp(file_path):
         timestamp_df = pd.read_excel(file_path, usecols="B", nrows=4, header=None)
         timestamp_str = timestamp_df.iloc[3, 0]
         
-        # Extract date and time using regex
-        # Looking for pattern like "20-May-2025 13:39"
-        match = re.search(r'(\d{1,2}-[A-Za-z]{3}-\d{4})\s+(\d{1,2}:\d{2})', timestamp_str)
-        if match:
-            date_str = match.group(1)
-            time_str = match.group(2)
-            date = datetime.strptime(date_str, '%d-%b-%Y')
-            time = datetime.strptime(time_str, '%H:%M').time()
-            return date, time
+        # Split by commas and get the third part (date and time)
+        parts = timestamp_str.split(',')
+        if len(parts) >= 3:
+            date_time_part = parts[2].strip()
+            # Split by space to separate date and time
+            date_time = date_time_part.split()
+            if len(date_time) >= 2:
+                date_str = date_time[0]  # Keep as text
+                time_str = date_time[1]  # Keep as text
+                return date_str, time_str
+        
+        print(f"Warning: Could not parse timestamp from {file_path.name}")
         return None, None
     except Exception as e:
         print(f"Error reading timestamp from {file_path.name}: {str(e)}")
@@ -319,26 +455,41 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
             
             # Add title
             overall_summary['A1'] = 'Document Register Overall Summary'
-            overall_summary['A1'].font = openpyxl.styles.Font(size=14, bold=True)
-            
-            # Add timestamp
-            overall_summary['A2'] = f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
-            overall_summary['A2'].font = openpyxl.styles.Font(italic=True)
+            overall_summary['A1'].font = OVERALL_SUMMARY_STYLES['title']['font']
+            overall_summary['A1'].alignment = OVERALL_SUMMARY_STYLES['title']['alignment']
+            overall_summary['A1'].fill = OVERALL_SUMMARY_STYLES['title']['fill']
+            overall_summary['A1'].border = OVERALL_SUMMARY_STYLES['border']
             
             # Get the latest data from Summary Data
             summary_data = pd.read_excel(output_file, sheet_name='Summary Data')
             latest_row = summary_data.iloc[-1]  # Get the last row
             
+            # Add generation timestamp
+            overall_summary['A2'] = f'Generated: {datetime.now().strftime("%d-%m-%Y %H-%M-%S")}'
+            overall_summary['A2'].font = OVERALL_SUMMARY_STYLES['timestamp']['font']
+            overall_summary['A2'].alignment = OVERALL_SUMMARY_STYLES['timestamp']['alignment']
+            overall_summary['A2'].fill = OVERALL_SUMMARY_STYLES['timestamp']['fill']
+            
+            # Add data export timestamp from Summary Data
+            export_date = latest_row['Date'].strftime("%d-%m-%Y") if isinstance(latest_row['Date'], datetime) else latest_row['Date']
+            export_time = latest_row['Time'].strftime("%H-%M-%S") if isinstance(latest_row['Time'], datetime) else latest_row['Time']
+            overall_summary['A3'] = f'Data Export: {export_date} {export_time}'
+            overall_summary['A3'].font = OVERALL_SUMMARY_STYLES['timestamp']['font']
+            overall_summary['A3'].alignment = OVERALL_SUMMARY_STYLES['timestamp']['alignment']
+            overall_summary['A3'].fill = OVERALL_SUMMARY_STYLES['timestamp']['fill']
+            
             # Get all column names from Summary Data
             all_columns = summary_data.columns.tolist()
             
             # Add total documents
-            overall_summary['A4'] = 'Total Documents:'
+            overall_summary['A5'] = 'Total Documents:'
             # Get total from Latest Data sheet
             latest_data = pd.read_excel(output_file, sheet_name='Latest Data')
             total_docs = len(latest_data)  # len() already gives us the correct count
-            overall_summary['B4'] = total_docs
-            overall_summary['B4'].font = openpyxl.styles.Font(bold=True)
+            overall_summary['B5'] = total_docs
+            overall_summary['B5'].font = OVERALL_SUMMARY_STYLES['total_cell']['font']
+            overall_summary['B5'].alignment = OVERALL_SUMMARY_STYLES['total_cell']['alignment']
+            overall_summary['B5'].fill = OVERALL_SUMMARY_STYLES['total_cell']['fill']
             
             # Filter and sort revision columns
             rev_columns = [col for col in all_columns if col.startswith('Rev_')]
@@ -356,17 +507,24 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
             status_columns.sort()
             
             # Add revision summary section
-            overall_summary['A6'] = 'Revision Summary'
-            overall_summary['A6'].font = openpyxl.styles.Font(bold=True, size=12)
+            overall_summary['A7'] = 'Revision Summary'
+            overall_summary['A7'].font = OVERALL_SUMMARY_STYLES['section_header']['font']
+            overall_summary['A7'].alignment = OVERALL_SUMMARY_STYLES['section_header']['alignment']
+            overall_summary['A7'].fill = OVERALL_SUMMARY_STYLES['section_header']['fill']
             
             # Add revision headers
-            overall_summary['A7'] = 'Revision'
-            overall_summary['B7'] = 'Count'
-            overall_summary['A7'].font = openpyxl.styles.Font(bold=True)
-            overall_summary['B7'].font = openpyxl.styles.Font(bold=True)
+            overall_summary['A8'] = 'Revision'
+            overall_summary['B8'] = 'Count'
+            overall_summary['A8'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
+            overall_summary['A8'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
+            overall_summary['A8'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
+            overall_summary['B8'] = 'Count'
+            overall_summary['B8'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
+            overall_summary['B8'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
+            overall_summary['B8'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
             
-            # Add revision data (starting from row 8)
-            row = 8
+            # Add revision data (starting from row 9)
+            row = 9
             for rev_col in rev_columns:
                 rev_name = rev_col.replace('Rev_', '')
                 overall_summary[f'A{row}'] = rev_name
@@ -376,33 +534,55 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
             # Add status summary section
             status_start_row = row + 2
             overall_summary[f'A{status_start_row}'] = 'Status Summary'
-            overall_summary[f'A{status_start_row}'].font = openpyxl.styles.Font(bold=True, size=12)
+            overall_summary[f'A{status_start_row}'].font = OVERALL_SUMMARY_STYLES['section_header']['font']
+            overall_summary[f'A{status_start_row}'].alignment = OVERALL_SUMMARY_STYLES['section_header']['alignment']
+            overall_summary[f'A{status_start_row}'].fill = OVERALL_SUMMARY_STYLES['section_header']['fill']
             
             # Add status headers
             overall_summary[f'A{status_start_row + 1}'] = 'Status'
             overall_summary[f'B{status_start_row + 1}'] = 'Count'
-            overall_summary[f'A{status_start_row + 1}'].font = openpyxl.styles.Font(bold=True)
-            overall_summary[f'B{status_start_row + 1}'].font = openpyxl.styles.Font(bold=True)
+            overall_summary[f'A{status_start_row + 1}'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
+            overall_summary[f'A{status_start_row + 1}'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
+            overall_summary[f'A{status_start_row + 1}'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
+            overall_summary[f'B{status_start_row + 1}'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
+            overall_summary[f'B{status_start_row + 1}'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
+            overall_summary[f'B{status_start_row + 1}'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
             
             # Add status data
             row = status_start_row + 2
             for status_col in status_columns:
                 status_name = status_col.replace('Status_', '')
-                overall_summary[f'A{row}'] = status_name
-                overall_summary[f'B{row}'] = latest_row.get(status_col, 0)
+                count = latest_row.get(status_col, 0)
+                
+                # Add status name with conditional formatting
+                status_cell = overall_summary[f'A{row}']
+                status_cell.value = status_name
+                style = apply_status_style(status_cell, status_name)
+                status_cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                status_cell.border = OVERALL_SUMMARY_STYLES['border']
+                
+                # Add count with matching style
+                count_cell = overall_summary[f'B{row}']
+                count_cell.value = count
+                count_cell.font = Font(
+                    name=style['font'].name,
+                    size=style['font'].size,
+                    bold=style['font'].bold,
+                    italic=style['font'].italic,
+                    color=style['font'].color
+                )
+                count_cell.fill = style['fill']
+                count_cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                count_cell.border = OVERALL_SUMMARY_STYLES['border']
+                
                 row += 1
             
             # Add borders and formatting
             for row in range(1, row):
                 for col in ['A', 'B']:
                     cell = overall_summary[f'{col}{row}']
-                    cell.border = openpyxl.styles.Border(
-                        left=openpyxl.styles.Side(style='thin'),
-                        right=openpyxl.styles.Side(style='thin'),
-                        top=openpyxl.styles.Side(style='thin'),
-                        bottom=openpyxl.styles.Side(style='thin')
-                    )
-                    cell.alignment = openpyxl.styles.Alignment(horizontal='left', vertical='center')
+                    cell.border = OVERALL_SUMMARY_STYLES['border']
+                    cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
             
             # Auto-adjust column widths for Overall Summary
             for column in overall_summary.columns:
@@ -463,14 +643,21 @@ def main():
             continue
             
         # Get timestamp from B4
-        date, time = get_file_timestamp(file_path)
-        if not date or not time:
+        date_str, time_str = get_file_timestamp(file_path)
+        if not date_str or not time_str:
             print(f"Skipping {file_path.name} - could not read timestamp")
             continue
             
-        if latest_timestamp is None or (date, time) > latest_timestamp:
-            latest_timestamp = (date, time)
-            latest_file = file_path
+        # Convert to datetime for comparison
+        try:
+            date = datetime.strptime(date_str, '%d-%b-%Y')
+            time = datetime.strptime(time_str, '%H:%M').time()
+            if latest_timestamp is None or (date, time) > latest_timestamp:
+                latest_timestamp = (date, time)
+                latest_file = file_path
+        except ValueError as e:
+            print(f"Warning: Could not parse date/time from {file_path.name}: {str(e)}")
+            continue
     
     if latest_file is None:
         print("No valid files found to process")
@@ -603,7 +790,7 @@ def main():
         all_counts[latest_timestamp] = counts
         
         # Update processed files record
-        file_key = f"{latest_timestamp[0].strftime('%Y-%m-%d')}_{latest_timestamp[1].strftime('%H:%M')}"
+        file_key = f"{date_str}_{time_str}"  # Use the string versions
         processed_files[latest_file.name] = file_key
         
     except Exception as e:
@@ -614,8 +801,8 @@ def main():
     summary_data = []
     for (date, time) in sorted(all_counts.keys()):
         row = {
-            'Date': date,
-            'Time': time
+            'Date': date.strftime('%d-%b-%Y'),  # Convert to string
+            'Time': time.strftime('%H:%M')      # Convert to string
         }
         counts = all_counts[(date, time)]
         for key in sorted(counts.keys()):
