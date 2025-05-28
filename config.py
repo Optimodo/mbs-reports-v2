@@ -43,19 +43,19 @@ def detect_project_from_file(file_path):
         print(f"Error detecting project from file: {str(e)}")
         return None
 
-def load_project_config(project_name=None, file_path=None):
+def load_project_config(project_name, input_file=None):
     """Load project-specific configuration.
     
     Args:
         project_name: Optional project name to load config for
-        file_path: Optional file path to detect project from
+        input_file: Optional file path to detect project from
         
     Returns:
         dict: Project configuration
     """
     # If no project name provided, try to detect from file
-    if not project_name and file_path:
-        project_name = detect_project_from_file(file_path)
+    if not project_name and input_file:
+        project_name = detect_project_from_file(input_file)
         if project_name:
             print(f"\nDetected project: {project_name}")
     
@@ -77,12 +77,15 @@ def load_project_config(project_name=None, file_path=None):
     sys.modules[project_name] = module
     spec.loader.exec_module(module)
     
-    return {
+    # Load the module and return the relevant settings
+    settings = {
         'EXCEL_SETTINGS': module.EXCEL_SETTINGS,
         'CHANGE_DETECTION': module.CHANGE_DETECTION,
         'REPORT_SETTINGS': module.REPORT_SETTINGS,
-        'FILE_TYPE_SETTINGS': module.FILE_TYPE_SETTINGS
+        'FILE_TYPE_SETTINGS': module.FILE_TYPE_SETTINGS if hasattr(module, 'FILE_TYPE_SETTINGS') else {},
+        'PROJECT_TITLE': getattr(module, 'PROJECT_TITLE', project_name)
     }
+    return settings
 
 # Default settings (used if no project is specified)
 DEFAULT_SETTINGS = {

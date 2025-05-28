@@ -1,5 +1,7 @@
 """Configuration for New Malden project."""
 
+PROJECT_TITLE = "New Malden"
+
 # Excel processing settings
 EXCEL_SETTINGS = {
     "sheet_name": 0,  # First sheet by default

@@ -1,5 +1,7 @@
 """Configuration for Oval Block B project."""
 
+PROJECT_TITLE = "Oval Village Block B"
+
 # Excel processing settings
 EXCEL_SETTINGS = {
     "sheet_name": 0,  # First sheet by default

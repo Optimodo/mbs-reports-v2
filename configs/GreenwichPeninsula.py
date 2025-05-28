@@ -1,5 +1,7 @@
 """Configuration for Greenwich Peninsula project."""
 
+PROJECT_TITLE = "Greenwich Peninsula"
+
 # Excel processing settings
 EXCEL_SETTINGS = {
     "sheet_name": 0,  # First sheet by default

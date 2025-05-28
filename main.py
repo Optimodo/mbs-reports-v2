@@ -11,6 +11,11 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 import openpyxl.styles
 import argparse
 from openpyxl.worksheet.page import PageMargins
+from openpyxl.chart import PieChart, Reference
+from openpyxl.chart.label import DataLabelList
+from openpyxl.chart.series import DataPoint
+from openpyxl.drawing.fill import ColorChoice, PatternFillProperties
+from openpyxl.drawing.colors import SchemeColor
 
 # Overall Summary Sheet Style Configuration
 OVERALL_SUMMARY_STYLES = {
@@ -431,6 +436,11 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
             try:
                 book = load_workbook(output_file)
                 
+                # Remove existing Overall Summary sheet if it exists (pandas won't replace it)
+                if 'Overall Summary' in book.sheetnames:
+                    book.remove(book['Overall Summary'])
+                    book.save(output_file)  # Save the removal
+                
                 # Remove existing Changes sheet if it exists
                 if 'Changes' in book.sheetnames:
                     book.remove(book['Changes'])
@@ -482,21 +492,6 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                                     # Highlight the changed cell
                                     row[idx].fill = yellow_fill
             
-            # Auto-adjust column widths for all sheets
-            for sheet_name in ['Summary Data', 'Changes', 'Latest Data']:
-                sheet = book[sheet_name]
-                for column in sheet.columns:
-                    max_length = 0
-                    column_letter = column[0].column_letter
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = (max_length + 2)
-                    sheet.column_dimensions[column_letter].width = adjusted_width
-            
             # Create or update Overall Summary sheet first
             if 'Overall Summary' in book.sheetnames:
                 book.remove(book['Overall Summary'])
@@ -512,12 +507,24 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
             overall_summary.sheet_properties.pageSetUpPr.horizontalCentered = True
             overall_summary.sheet_properties.pageSetUpPr.verticalCentered = True
             
-            # Add title
-            overall_summary['A1'] = 'Document Register Overall Summary'
-            overall_summary['A1'].font = OVERALL_SUMMARY_STYLES['title']['font']
-            overall_summary['A1'].alignment = OVERALL_SUMMARY_STYLES['title']['alignment']
-            overall_summary['A1'].fill = OVERALL_SUMMARY_STYLES['title']['fill']
-            overall_summary['A1'].border = OVERALL_SUMMARY_STYLES['border']
+            # Merge and center the title across A1:O1
+            overall_summary.merge_cells('A1:O1')
+            
+            # Set row height for the title row
+            overall_summary.row_dimensions[1].height = 70
+
+            # Add title with project name on first line and rest on second line
+            project_title = config.get('PROJECT_TITLE', '')
+            if project_title:
+                title_text = f"{project_title}\nDocument Register Overall Summary"
+            else:
+                title_text = "Document Register Overall Summary"
+            overall_summary['A1'] = title_text
+            
+            # Style exactly like the working test script
+            overall_summary['A1'].font = Font(name='Calibri', size=14, bold=True, color='000000')
+            overall_summary['A1'].fill = PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+            overall_summary['A1'].alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
             
             # Get the latest data from Summary Data
             summary_data = pd.read_excel(output_file, sheet_name='Summary Data')
@@ -625,7 +632,43 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                 # Add status summary
                 status_row = start_row + 2
                 total_status_count = 0
-                for status, count in sorted(status_counts.items()):
+                
+                # Create ordered list with Published first, then others
+                ordered_statuses = []
+                published_statuses = []
+                status_a_statuses = []
+                status_b_statuses = []
+                status_c_statuses = []
+                other_statuses = []
+                
+                # Categorize statuses
+                for status, count in status_counts.items():
+                    categorized = False
+                    for style_name, style_config in STATUS_STYLES.items():
+                        if any(term == status for term in style_config['search_terms']):
+                            if style_name == 'PUBLISHED':
+                                published_statuses.append((status, count))
+                            elif style_name == 'STATUS A':
+                                status_a_statuses.append((status, count))
+                            elif style_name == 'STATUS B':
+                                status_b_statuses.append((status, count))
+                            elif style_name == 'STATUS C':
+                                status_c_statuses.append((status, count))
+                            else:
+                                other_statuses.append((status, count))
+                            categorized = True
+                            break
+                    if not categorized:
+                        other_statuses.append((status, count))
+                
+                # Build ordered list: Published first, then A, B, C, Other
+                ordered_statuses = (sorted(published_statuses) + 
+                                  sorted(status_a_statuses) + 
+                                  sorted(status_b_statuses) + 
+                                  sorted(status_c_statuses) + 
+                                  sorted(other_statuses))
+                
+                for status, count in ordered_statuses:
                     total_status_count += count
                     
                     # Add status name with conditional formatting
@@ -727,25 +770,250 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                     overall_summary[f'B{row}'].border = OVERALL_SUMMARY_STYLES['border']
             
             # Add borders and formatting
-            for row in range(1, row + 1):
+            for row_num in range(2, row + 1):  # Start from row 2 to skip the title row
                 for col in ['A', 'B', 'C', 'D']:
-                    cell = overall_summary[f'{col}{row}']
+                    cell = overall_summary[f'{col}{row_num}']
                     cell.border = OVERALL_SUMMARY_STYLES['border']
                     cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+            
+            # Create pie charts for P and C revision statuses
+            chart_start_col = 'G'  # Start charts in column G to give more space
+            
+            # Function to create a pie chart for revision status data
+            def create_status_pie_chart(revision_type, chart_title, chart_position):
+                """Create a pie chart for status distribution of a specific revision type"""
+                # Get status data for this revision type
+                if revision_type == 'P':
+                    rev_data = latest_data[latest_data['Rev'].str.startswith('P')]
+                elif revision_type == 'C':
+                    rev_data = latest_data[latest_data['Rev'].str.startswith('C')]
+                else:
+                    return None
+                
+                if rev_data.empty:
+                    return None
+                
+                # Count statuses
+                status_counts = rev_data['Status'].value_counts()
+                
+                if len(status_counts) == 0:
+                    return None
+                
+                # Group statuses according to STATUS_STYLES categories
+                grouped_counts = {
+                    'Published': 0,     # Published gets its own category but will be grouped with Status A for charts
+                    'Status A': 0,
+                    'Status B': 0, 
+                    'Status C': 0,
+                    'Other': 0
+                }
+                
+                for status, count in status_counts.items():
+                    # Check which category this status belongs to
+                    categorized = False
+                    for style_name, style_config in STATUS_STYLES.items():
+                        if any(term == status for term in style_config['search_terms']):
+                            if style_name == 'PUBLISHED':
+                                grouped_counts['Published'] += count
+                            if style_name == 'STATUS A':
+                                grouped_counts['Status A'] += count
+                            elif style_name == 'STATUS B':
+                                grouped_counts['Status B'] += count
+                            elif style_name == 'STATUS C':
+                                grouped_counts['Status C'] += count
+                            else:
+                                if style_name != 'PUBLISHED':  # Don't double-count Published
+                                    grouped_counts['Other'] += count
+                            categorized = True
+                            break
+                    
+                    # If not categorized, add to Other
+                    if not categorized:
+                        grouped_counts['Other'] += count
+                
+                # For chart purposes, combine Published with Status A
+                chart_grouped_counts = grouped_counts.copy()
+                if chart_grouped_counts['Published'] > 0:
+                    chart_grouped_counts['Status A'] += chart_grouped_counts['Published']
+                    del chart_grouped_counts['Published']
+                
+                # Remove categories with zero counts
+                chart_grouped_counts = {k: v for k, v in chart_grouped_counts.items() if v > 0}
+                
+                if not chart_grouped_counts:
+                    return None
+                
+                # Find a good place to put chart data (in a hidden area)
+                data_start_row = 100  # Use row 100+ to keep chart data out of the way
+                chart_col_offset = 0 if revision_type == 'P' else 4  # Offset C chart data more
+                
+                # Add chart data to hidden area
+                data_row = data_start_row
+                chart_labels_with_counts = []
+                for category, count in chart_grouped_counts.items():
+                    label_with_count = f"{category} ({count})"
+                    chart_labels_with_counts.append(label_with_count)
+                    overall_summary[f'{chr(ord(chart_start_col) + chart_col_offset)}{data_row}'] = label_with_count
+                    overall_summary[f'{chr(ord(chart_start_col) + chart_col_offset + 1)}{data_row}'] = count
+                    data_row += 1
+                
+                # Create pie chart
+                chart = PieChart()
+                chart.title = chart_title
+                chart.width = 16  # Make charts wider
+                chart.height = 12  # Make charts taller
+                
+                # Define data range from hidden area
+                labels = Reference(overall_summary, 
+                                 min_col=ord(chart_start_col) - ord('A') + 1 + chart_col_offset, 
+                                 min_row=data_start_row, 
+                                 max_row=data_row - 1)
+                data = Reference(overall_summary, 
+                               min_col=ord(chart_start_col) - ord('A') + 2 + chart_col_offset, 
+                               min_row=data_start_row, 
+                               max_row=data_row - 1)
+                
+                chart.add_data(data, titles_from_data=False)
+                chart.set_categories(labels)
+                
+                # Configure data labels to show only percentages (not "Series 1")
+                chart.dataLabels = DataLabelList()
+                chart.dataLabels.showCatName = False  # Don't show category name on slices
+                chart.dataLabels.showVal = False      # Don't show values on slices
+                chart.dataLabels.showPercent = True
+                chart.dataLabels.showSerName = False  # This should remove "Series 1"
+                
+                # Set legend to show our custom labels with counts
+                chart.legend.position = 'r'  # Position legend to the right
+                chart.legend.layout = None  # Let Excel auto-position the legend
+                
+                # Style the chart colors to match STATUS_STYLES
+                # Define colors for each category
+                colors = {
+                    'Status A': '00B050',  # Green
+                    'Status B': 'EDDDA1',  # Beige (matching STATUS_STYLES)
+                    'Status C': 'ED1111',  # Red
+                    'Other': '808080'      # Grey
+                }
+                
+                # Apply colors to chart slices
+                try:
+                    if chart.series:
+                        series = chart.series[0]
+                        for i, (category, count) in enumerate(chart_grouped_counts.items()):
+                            # Extract the category name without the count
+                            category_name = category.split(' (')[0]
+                            if category_name in colors:
+                                # Create a data point with the specified color
+                                pt = DataPoint(idx=i)
+                                # Set the fill color
+                                pt.graphicalProperties.solidFill = colors[category_name]
+                                series.dPt.append(pt)
+                except Exception as e:
+                    # If coloring fails, continue without custom colors
+                    print(f"Warning: Could not apply chart colors: {e}")
+                
+                # Alternative approach using series formatting
+                try:
+                    if chart.series and len(chart.series) > 0:
+                        series = chart.series[0]
+                        # Clear any existing data points
+                        series.dPt = []
+                        
+                        for i, (category, count) in enumerate(chart_grouped_counts.items()):
+                            category_name = category.split(' (')[0]
+                            if category_name in colors:
+                                # Create data point
+                                pt = DataPoint(idx=i)
+                                # Create fill properties
+                                fill = PatternFillProperties()
+                                fill.solidFill = ColorChoice(srgbClr=colors[category_name])
+                                pt.graphicalProperties.solidFill = fill.solidFill
+                                series.dPt.append(pt)
+                except Exception as e:
+                    # If this approach fails too, try a simpler method
+                    try:
+                        for i, (category, count) in enumerate(chart_grouped_counts.items()):
+                            category_name = category.split(' (')[0]
+                            if category_name in colors and chart.series:
+                                pt = DataPoint(idx=i)
+                                # Simple color assignment
+                                pt.graphicalProperties.solidFill = colors[category_name]
+                                if not hasattr(chart.series[0], 'dPt') or chart.series[0].dPt is None:
+                                    chart.series[0].dPt = []
+                                chart.series[0].dPt.append(pt)
+                    except Exception as e2:
+                        print(f"Warning: All chart coloring methods failed: {e2}")
+                        pass
+                
+                # Position the chart
+                overall_summary.add_chart(chart, chart_position)
+                
+                return data_row
+            
+            # Create P revision status chart - position it lower to give more space from title
+            create_status_pie_chart('P', 'P Revision Status Distribution', 'G2')
+            
+            # Create C revision status chart - position it below P chart with spacing
+            create_status_pie_chart('C', 'C Revision Status Distribution', 'G27')
             
             # Auto-adjust column widths for Overall Summary
             for column in overall_summary.columns:
                 max_length = 0
-                column_letter = column[0].column_letter
+                column_letter = None
                 for cell in column:
+                    if hasattr(cell, 'column_letter'):
+                        column_letter = cell.column_letter
+                        break
+                
+                if not column_letter:
+                    continue  # Skip if we can't get column letter
+                
+                # Skip the first row for merged columns in Overall Summary
+                start_row = 2 if column_letter in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O'] else 1
+                for cell in column[start_row-1:]:
                     try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
+                        # Skip merged cells
+                        if hasattr(cell, 'value') and cell.value is not None:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
                     except:
                         pass
-                adjusted_width = (max_length + 2)
+                # Set minimum width of 8 for empty/narrow columns, otherwise use calculated width
+                adjusted_width = max(8, max_length + 2)
                 overall_summary.column_dimensions[column_letter].width = adjusted_width
             
+            # Auto-adjust column widths for all other sheets
+            for sheet_name in ['Summary Data', 'Changes', 'Latest Data']:
+                if sheet_name in book.sheetnames:
+                    sheet = book[sheet_name]
+                    for column in sheet.columns:
+                        max_length = 0
+                        # Get column letter from first non-merged cell
+                        column_letter = None
+                        for cell in column:
+                            if hasattr(cell, 'column_letter'):
+                                column_letter = cell.column_letter
+                                break
+                        
+                        if not column_letter:
+                            continue  # Skip if we can't get column letter
+                        
+                        for cell in column:
+                            try:
+                                # Skip merged cells
+                                if hasattr(cell, 'value') and cell.value is not None:
+                                    if len(str(cell.value)) > max_length:
+                                        max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = (max_length + 2)
+                        sheet.column_dimensions[column_letter].width = adjusted_width
+            
+            # FINAL ATTEMPT: Set alignment as the very last operation
+            overall_summary['A1'].alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            
+            # Final save with the Overall Summary sheet
             book.save(output_file)
             return True
             
@@ -795,6 +1063,9 @@ def generate_standalone_report(input_file, output_file, config):
         print(f"Error generating standalone report: {str(e)}")
         return False
 
+def slugify(text):
+    return re.sub(r'[^A-Za-z0-9]+', '_', text).strip('_')
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Document Register Report Generator')
@@ -823,7 +1094,11 @@ def main():
         # Load project configuration based on input file
         config = load_project_config(args.project, input_file)
         
-        output_file = Path(args.output) if args.output else output_dir / f"standalone_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        if args.output:
+            output_file = Path(args.output)
+        else:
+            project_slug = slugify(config.get('PROJECT_TITLE', 'standalone_report'))
+            output_file = output_dir / f"{project_slug}_standalone_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         generate_standalone_report(input_file, output_file, config)
         return
     
@@ -1029,6 +1304,13 @@ def main():
     changes_df = pd.DataFrame(all_changes) if all_changes else pd.DataFrame(columns=list(current_df.columns) + ['Change Type', 'Change Details'])
     
     # Save to Excel
+    if args.output:
+        project_slug = slugify(args.output)
+        output_file = Path(args.output)
+    else:
+        project_slug = slugify(config.get('PROJECT_TITLE', 'summary'))
+        output_file = output_dir / f"{project_slug}_summary.xlsx"
+    
     if save_excel_with_retry(summary_df, changes_df, current_df, output_file, config):
         # Save processed files record
         save_processed_files(processed_files)
