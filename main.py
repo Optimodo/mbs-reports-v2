@@ -9,6 +9,8 @@ import time
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 import openpyxl.styles
+import argparse
+from openpyxl.worksheet.page import PageMargins
 
 # Overall Summary Sheet Style Configuration
 OVERALL_SUMMARY_STYLES = {
@@ -330,21 +332,53 @@ def get_file_timestamp(file_path):
         print(f"Error reading timestamp from {file_path.name}: {str(e)}")
         return None, None
 
+def clean_revision(val):
+    if pd.isna(val):
+        return ''
+    s = str(val).replace('\u00A0', ' ').strip().upper()
+    # Replace Cyrillic 'С' (U+0421) with Latin 'C'
+    s = s.replace('\u0421', 'C')
+    return s
+
 def get_counts(df):
     """Get counts of revisions and statuses from the dataframe"""
     counts = {}
     
-    # Count revisions
-    rev_counts = df['Rev'].value_counts()
-    for rev, count in rev_counts.items():
-        counts[f'Rev_{rev}'] = count
-    
-    # Count statuses
-    status_counts = df['Status'].value_counts()
-    for status, count in status_counts.items():
-        counts[f'Status_{status}'] = count
-    
-    return counts
+    try:
+        # Clean the Rev column
+        if 'Rev' in df.columns:
+            df['Rev'] = df['Rev'].apply(clean_revision)
+        # Count revisions
+        rev_counts = df['Rev'].value_counts()
+        for rev, count in rev_counts.items():
+            counts[f'Rev_{rev}'] = count
+        
+        # Count statuses
+        status_counts = df['Status'].value_counts()
+        for status, count in status_counts.items():
+            counts[f'Status_{status}'] = count
+        
+        # Count file types if the column exists
+        if 'OVL - File Type' in df.columns:
+            file_type_counts = df['OVL - File Type'].value_counts()
+            for file_type, count in file_type_counts.items():
+                counts[f'FileType_{file_type}'] = count
+        elif 'Form' in df.columns:
+            file_type_counts = df['Form'].value_counts()
+            for file_type, count in file_type_counts.items():
+                counts[f'FileType_{file_type}'] = count
+        elif 'File Type' in df.columns:
+            file_type_counts = df['File Type'].value_counts()
+            for file_type, count in file_type_counts.items():
+                counts[f'FileType_{file_type}'] = count
+        
+        return counts
+    except Exception as e:
+        print(f"Error in get_counts: {str(e)}")
+        print("DataFrame columns:", df.columns.tolist())
+        print("DataFrame head:")
+        print(df.head())
+        raise
 
 def load_processed_files():
     """Load the record of processed files"""
@@ -389,7 +423,7 @@ def compare_values(current_val, prev_val, col_name):
     # Compare the normalized strings
     return current_str != prev_str
 
-def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, max_retries=3):
+def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, config, max_retries=3):
     """Try to save the Excel file with retries"""
     for attempt in range(max_retries):
         try:
@@ -401,10 +435,25 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
                 if 'Changes' in book.sheetnames:
                     book.remove(book['Changes'])
                 
+                # Read existing summary data if it exists
+                existing_summary = None
+                if 'Summary Data' in book.sheetnames:
+                    existing_summary = pd.read_excel(output_file, sheet_name='Summary Data')
+                    # Remove the sheet as we'll recreate it with appended data
+                    book.remove(book['Summary Data'])
+                
                 with pd.ExcelWriter(output_file, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                    # Save sheets in the desired order
+                    # Append new changes to changes sheet
                     changes_df.to_excel(writer, sheet_name='Changes', index=False)
-                    summary_df.to_excel(writer, sheet_name='Summary Data', index=False)
+                    
+                    # If we have existing summary data, append new data to it
+                    if existing_summary is not None:
+                        combined_summary = pd.concat([existing_summary, summary_df], ignore_index=True)
+                        combined_summary.to_excel(writer, sheet_name='Summary Data', index=False)
+                    else:
+                        summary_df.to_excel(writer, sheet_name='Summary Data', index=False)
+                    
+                    # Update latest data sheet
                     latest_data_df.to_excel(writer, sheet_name='Latest Data', index=False)
             except FileNotFoundError:
                 # If file doesn't exist, create new one
@@ -452,6 +501,16 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
             if 'Overall Summary' in book.sheetnames:
                 book.remove(book['Overall Summary'])
             overall_summary = book.create_sheet('Overall Summary', 0)  # Create at index 0 (first position)
+
+            # Set print layout: fit to 1 page, center, narrow margins
+            overall_summary.page_setup.fitToWidth = 1
+            overall_summary.page_setup.fitToHeight = 0
+            overall_summary.page_setup.horizontalCentered = True
+            overall_summary.page_setup.verticalCentered = True
+            overall_summary.page_margins = PageMargins(left=0.25, right=0.25, top=0.75, bottom=0.75, header=0.3, footer=0.3)
+            # Extra reliability for centering
+            overall_summary.sheet_properties.pageSetUpPr.horizontalCentered = True
+            overall_summary.sheet_properties.pageSetUpPr.verticalCentered = True
             
             # Add title
             overall_summary['A1'] = 'Document Register Overall Summary'
@@ -464,19 +523,13 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
             summary_data = pd.read_excel(output_file, sheet_name='Summary Data')
             latest_row = summary_data.iloc[-1]  # Get the last row
             
-            # Add generation timestamp
-            overall_summary['A2'] = f'Generated: {datetime.now().strftime("%d-%m-%Y %H-%M-%S")}'
+            # Add data export timestamp from Summary Data (now in row 2)
+            export_date = latest_row['Date'].strftime("%d-%m-%Y") if isinstance(latest_row['Date'], datetime) else latest_row['Date']
+            export_time = latest_row['Time'].strftime("%H-%M-%S") if isinstance(latest_row['Time'], datetime) else latest_row['Time']
+            overall_summary['A2'] = f'Data Export: {export_date} {export_time}'
             overall_summary['A2'].font = OVERALL_SUMMARY_STYLES['timestamp']['font']
             overall_summary['A2'].alignment = OVERALL_SUMMARY_STYLES['timestamp']['alignment']
             overall_summary['A2'].fill = OVERALL_SUMMARY_STYLES['timestamp']['fill']
-            
-            # Add data export timestamp from Summary Data
-            export_date = latest_row['Date'].strftime("%d-%m-%Y") if isinstance(latest_row['Date'], datetime) else latest_row['Date']
-            export_time = latest_row['Time'].strftime("%H-%M-%S") if isinstance(latest_row['Time'], datetime) else latest_row['Time']
-            overall_summary['A3'] = f'Data Export: {export_date} {export_time}'
-            overall_summary['A3'].font = OVERALL_SUMMARY_STYLES['timestamp']['font']
-            overall_summary['A3'].alignment = OVERALL_SUMMARY_STYLES['timestamp']['alignment']
-            overall_summary['A3'].fill = OVERALL_SUMMARY_STYLES['timestamp']['fill']
             
             # Get all column names from Summary Data
             all_columns = summary_data.columns.tolist()
@@ -493,93 +546,189 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
             
             # Filter and sort revision columns
             rev_columns = [col for col in all_columns if col.startswith('Rev_')]
-            rev_columns.sort(key=lambda x: (
-                # Sort P revisions first
-                (0 if x.startswith('Rev_P') else 1),
-                # Then sort by number
-                int(x.split('_')[1][1:]) if x.split('_')[1][1:].isdigit() else float('inf'),
-                # Then sort alphabetically
-                x
-            ))
             
-            # Filter and sort status columns
-            status_columns = [col for col in all_columns if col.startswith('Status_')]
-            status_columns.sort()
+            # Group revisions by type
+            p_revs = sorted([col for col in rev_columns if col.startswith('Rev_P')], 
+                          key=lambda x: int(x.split('_')[1][1:]) if x.split('_')[1][1:].isdigit() else float('inf'))
+            c_revs = sorted([col for col in rev_columns if col.startswith('Rev_C')],
+                          key=lambda x: int(x.split('_')[1][1:]) if x.split('_')[1][1:].isdigit() else float('inf'))
+            other_revs = sorted([col for col in rev_columns if not (col.startswith('Rev_P') or col.startswith('Rev_C'))])
             
-            # Add revision summary section
-            overall_summary['A7'] = 'Revision Summary'
-            overall_summary['A7'].font = OVERALL_SUMMARY_STYLES['section_header']['font']
-            overall_summary['A7'].alignment = OVERALL_SUMMARY_STYLES['section_header']['alignment']
-            overall_summary['A7'].fill = OVERALL_SUMMARY_STYLES['section_header']['fill']
-            
-            # Add revision headers
-            overall_summary['A8'] = 'Revision'
-            overall_summary['B8'] = 'Count'
-            overall_summary['A8'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
-            overall_summary['A8'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
-            overall_summary['A8'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
-            overall_summary['B8'] = 'Count'
-            overall_summary['B8'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
-            overall_summary['B8'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
-            overall_summary['B8'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
-            
-            # Add revision data (starting from row 9)
-            row = 9
-            for rev_col in rev_columns:
-                rev_name = rev_col.replace('Rev_', '')
-                overall_summary[f'A{row}'] = rev_name
-                overall_summary[f'B{row}'] = latest_row.get(rev_col, 0)
-                row += 1
-            
-            # Add status summary section
-            status_start_row = row + 2
-            overall_summary[f'A{status_start_row}'] = 'Status Summary'
-            overall_summary[f'A{status_start_row}'].font = OVERALL_SUMMARY_STYLES['section_header']['font']
-            overall_summary[f'A{status_start_row}'].alignment = OVERALL_SUMMARY_STYLES['section_header']['alignment']
-            overall_summary[f'A{status_start_row}'].fill = OVERALL_SUMMARY_STYLES['section_header']['fill']
-            
-            # Add status headers
-            overall_summary[f'A{status_start_row + 1}'] = 'Status'
-            overall_summary[f'B{status_start_row + 1}'] = 'Count'
-            overall_summary[f'A{status_start_row + 1}'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
-            overall_summary[f'A{status_start_row + 1}'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
-            overall_summary[f'A{status_start_row + 1}'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
-            overall_summary[f'B{status_start_row + 1}'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
-            overall_summary[f'B{status_start_row + 1}'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
-            overall_summary[f'B{status_start_row + 1}'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
-            
-            # Add status data
-            row = status_start_row + 2
-            for status_col in status_columns:
-                status_name = status_col.replace('Status_', '')
-                count = latest_row.get(status_col, 0)
+            # Function to add revision and status summary
+            def add_revision_summary(start_row, rev_columns, title):
+                """Add a revision summary section with a combined status summary"""
+                # Add section header
+                overall_summary[f'A{start_row}'] = title
+                overall_summary[f'A{start_row}'].font = OVERALL_SUMMARY_STYLES['section_header']['font']
+                overall_summary[f'A{start_row}'].alignment = OVERALL_SUMMARY_STYLES['section_header']['alignment']
+                overall_summary[f'A{start_row}'].fill = OVERALL_SUMMARY_STYLES['section_header']['fill']
                 
-                # Add status name with conditional formatting
-                status_cell = overall_summary[f'A{row}']
-                status_cell.value = status_name
-                style = apply_status_style(status_cell, status_name)
-                status_cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
-                status_cell.border = OVERALL_SUMMARY_STYLES['border']
+                # Add revision headers
+                overall_summary[f'A{start_row + 1}'] = 'Revision'
+                overall_summary[f'B{start_row + 1}'] = 'Count'
+                overall_summary[f'C{start_row + 1}'] = 'Status'
+                overall_summary[f'D{start_row + 1}'] = 'Count'
                 
-                # Add count with matching style
-                count_cell = overall_summary[f'B{row}']
-                count_cell.value = count
-                count_cell.font = Font(
-                    name=style['font'].name,
-                    size=style['font'].size,
-                    bold=style['font'].bold,
-                    italic=style['font'].italic,
-                    color=style['font'].color
-                )
-                count_cell.fill = style['fill']
-                count_cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
-                count_cell.border = OVERALL_SUMMARY_STYLES['border']
+                # Style headers
+                for col in ['A', 'B', 'C', 'D']:
+                    overall_summary[f'{col}{start_row + 1}'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
+                    overall_summary[f'{col}{start_row + 1}'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
+                    overall_summary[f'{col}{start_row + 1}'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
+                    overall_summary[f'{col}{start_row + 1}'].border = OVERALL_SUMMARY_STYLES['border']
                 
-                row += 1
+                # Get status counts for all revisions in this group
+                status_counts = {}
+                total_count = 0
+                
+                for rev_col in rev_columns:
+                    rev_name = rev_col.replace('Rev_', '')
+                    count = latest_row.get(rev_col, 0)
+                    total_count += count
+                    
+                    # Filter latest data for this revision
+                    rev_data = latest_data[latest_data['Rev'] == rev_name]
+                    # Count statuses
+                    for status, count in rev_data['Status'].value_counts().items():
+                        status_counts[status] = status_counts.get(status, 0) + count
+                
+                # Add revision data
+                row = start_row + 2
+                for rev_col in rev_columns:
+                    rev_name = rev_col.replace('Rev_', '')
+                    count = latest_row.get(rev_col, 0)
+                    
+                    # Add revision name and count
+                    overall_summary[f'A{row}'] = rev_name
+                    overall_summary[f'B{row}'] = count
+                    overall_summary[f'A{row}'].font = OVERALL_SUMMARY_STYLES['data_cell']['font']
+                    overall_summary[f'A{row}'].alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                    overall_summary[f'A{row}'].fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
+                    overall_summary[f'A{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                    overall_summary[f'B{row}'].font = OVERALL_SUMMARY_STYLES['data_cell']['font']
+                    overall_summary[f'B{row}'].alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                    overall_summary[f'B{row}'].fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
+                    overall_summary[f'B{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                    row += 1
+                
+                # Add total row for revisions
+                overall_summary[f'A{row}'] = 'Total'
+                overall_summary[f'B{row}'] = total_count
+                overall_summary[f'A{row}'].font = OVERALL_SUMMARY_STYLES['total_cell']['font']
+                overall_summary[f'A{row}'].alignment = OVERALL_SUMMARY_STYLES['total_cell']['alignment']
+                overall_summary[f'A{row}'].fill = OVERALL_SUMMARY_STYLES['total_cell']['fill']
+                overall_summary[f'A{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                overall_summary[f'B{row}'].font = OVERALL_SUMMARY_STYLES['total_cell']['font']
+                overall_summary[f'B{row}'].alignment = OVERALL_SUMMARY_STYLES['total_cell']['alignment']
+                overall_summary[f'B{row}'].fill = OVERALL_SUMMARY_STYLES['total_cell']['fill']
+                overall_summary[f'B{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                
+                # Add status summary
+                status_row = start_row + 2
+                total_status_count = 0
+                for status, count in sorted(status_counts.items()):
+                    total_status_count += count
+                    
+                    # Add status name with conditional formatting
+                    status_cell = overall_summary[f'C{status_row}']
+                    status_cell.value = status
+                    style = apply_status_style(status_cell, status)
+                    status_cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                    status_cell.border = OVERALL_SUMMARY_STYLES['border']
+                    
+                    # Add count with matching style
+                    count_cell = overall_summary[f'D{status_row}']
+                    count_cell.value = count
+                    count_cell.font = Font(
+                        name=style['font'].name,
+                        size=style['font'].size,
+                        bold=style['font'].bold,
+                        italic=style['font'].italic,
+                        color=style['font'].color
+                    )
+                    count_cell.fill = style['fill']
+                    count_cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                    count_cell.border = OVERALL_SUMMARY_STYLES['border']
+                    
+                    status_row += 1
+                
+                # Add total row for status counts
+                overall_summary[f'C{status_row}'] = 'Total'
+                overall_summary[f'D{status_row}'] = total_status_count
+                overall_summary[f'C{status_row}'].font = OVERALL_SUMMARY_STYLES['total_cell']['font']
+                overall_summary[f'C{status_row}'].alignment = OVERALL_SUMMARY_STYLES['total_cell']['alignment']
+                overall_summary[f'C{status_row}'].fill = OVERALL_SUMMARY_STYLES['total_cell']['fill']
+                overall_summary[f'C{status_row}'].border = OVERALL_SUMMARY_STYLES['border']
+                overall_summary[f'D{status_row}'].font = OVERALL_SUMMARY_STYLES['total_cell']['font']
+                overall_summary[f'D{status_row}'].alignment = OVERALL_SUMMARY_STYLES['total_cell']['alignment']
+                overall_summary[f'D{status_row}'].fill = OVERALL_SUMMARY_STYLES['total_cell']['fill']
+                overall_summary[f'D{status_row}'].border = OVERALL_SUMMARY_STYLES['border']
+                
+                return max(row, status_row) + 2  # Return the next row to start from
+            
+            # Add P revision summary
+            current_row = 7
+            current_row = add_revision_summary(current_row, p_revs, 'P Revision Summary')
+            
+            # Add C revision summary
+            current_row = add_revision_summary(current_row, c_revs, 'C Revision Summary')
+            
+            # Add other revision summary
+            current_row = add_revision_summary(current_row, other_revs, 'Other Revision Summary')
+            
+            # Add file type summary section if enabled in config
+            if config.get('FILE_TYPE_SETTINGS', {}).get('include_in_summary', False):
+                file_type_col = config['FILE_TYPE_SETTINGS']['column_name']
+                if file_type_col in latest_data.columns:
+                    # Add file type summary section
+                    file_type_start_row = current_row + 2
+                    overall_summary[f'A{file_type_start_row}'] = config['FILE_TYPE_SETTINGS']['summary_title']
+                    overall_summary[f'A{file_type_start_row}'].font = OVERALL_SUMMARY_STYLES['section_header']['font']
+                    overall_summary[f'A{file_type_start_row}'].alignment = OVERALL_SUMMARY_STYLES['section_header']['alignment']
+                    overall_summary[f'A{file_type_start_row}'].fill = OVERALL_SUMMARY_STYLES['section_header']['fill']
+                    
+                    # Add file type headers
+                    overall_summary[f'A{file_type_start_row + 1}'] = 'File Type'
+                    overall_summary[f'B{file_type_start_row + 1}'] = 'Count'
+                    overall_summary[f'A{file_type_start_row + 1}'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
+                    overall_summary[f'A{file_type_start_row + 1}'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
+                    overall_summary[f'A{file_type_start_row + 1}'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
+                    overall_summary[f'B{file_type_start_row + 1}'].font = OVERALL_SUMMARY_STYLES['column_header']['font']
+                    overall_summary[f'B{file_type_start_row + 1}'].alignment = OVERALL_SUMMARY_STYLES['column_header']['alignment']
+                    overall_summary[f'B{file_type_start_row + 1}'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
+                    
+                    # Add file type data
+                    row = file_type_start_row + 2
+                    file_type_counts = latest_data[file_type_col].value_counts()
+                    total_file_types = 0
+                    for file_type, count in file_type_counts.items():
+                        total_file_types += count
+                        overall_summary[f'A{row}'] = file_type
+                        overall_summary[f'B{row}'] = count
+                        overall_summary[f'A{row}'].font = OVERALL_SUMMARY_STYLES['data_cell']['font']
+                        overall_summary[f'A{row}'].alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                        overall_summary[f'A{row}'].fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
+                        overall_summary[f'A{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                        overall_summary[f'B{row}'].font = OVERALL_SUMMARY_STYLES['data_cell']['font']
+                        overall_summary[f'B{row}'].alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                        overall_summary[f'B{row}'].fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
+                        overall_summary[f'B{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                        row += 1
+                    
+                    # Add total row for file types
+                    overall_summary[f'A{row}'] = 'Total'
+                    overall_summary[f'B{row}'] = total_file_types
+                    overall_summary[f'A{row}'].font = OVERALL_SUMMARY_STYLES['total_cell']['font']
+                    overall_summary[f'A{row}'].alignment = OVERALL_SUMMARY_STYLES['total_cell']['alignment']
+                    overall_summary[f'A{row}'].fill = OVERALL_SUMMARY_STYLES['total_cell']['fill']
+                    overall_summary[f'A{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                    overall_summary[f'B{row}'].font = OVERALL_SUMMARY_STYLES['total_cell']['font']
+                    overall_summary[f'B{row}'].alignment = OVERALL_SUMMARY_STYLES['total_cell']['alignment']
+                    overall_summary[f'B{row}'].fill = OVERALL_SUMMARY_STYLES['total_cell']['fill']
+                    overall_summary[f'B{row}'].border = OVERALL_SUMMARY_STYLES['border']
             
             # Add borders and formatting
-            for row in range(1, row):
-                for col in ['A', 'B']:
+            for row in range(1, row + 1):
+                for col in ['A', 'B', 'C', 'D']:
                     cell = overall_summary[f'{col}{row}']
                     cell.border = OVERALL_SUMMARY_STYLES['border']
                     cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
@@ -609,12 +758,76 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, m
                 return False
     return False
 
+def generate_standalone_report(input_file, output_file, config):
+    """Generate a standalone report from a single input file"""
+    try:
+        # Read the input file
+        current_df = pd.read_excel(input_file, **config['EXCEL_SETTINGS'])
+        # Convert all columns to string
+        for col in current_df.columns:
+            current_df[col] = current_df[col].astype(str)
+        
+        # Get counts for summary
+        counts = get_counts(current_df)
+        
+        # Create summary DataFrame with single row
+        summary_data = [{
+            'Date': datetime.now().strftime('%d-%b-%Y'),
+            'Time': datetime.now().strftime('%H:%M')
+        }]
+        for key in sorted(counts.keys()):
+            summary_data[0][key] = counts.get(key, 0)
+        
+        summary_df = pd.DataFrame(summary_data)
+        
+        # Create empty changes DataFrame since this is a standalone report
+        changes_df = pd.DataFrame(columns=list(current_df.columns) + ['Change Type', 'Change Details'])
+        
+        # Save to Excel
+        if save_excel_with_retry(summary_df, changes_df, current_df, output_file, config):
+            print(f"\nStandalone report generated in {output_file}")
+            return True
+        else:
+            print("\nPlease close any open Excel files and try again.")
+            return False
+            
+    except Exception as e:
+        print(f"Error generating standalone report: {str(e)}")
+        return False
+
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Document Register Report Generator')
+    parser.add_argument('--standalone', action='store_true', help='Generate a standalone report')
+    parser.add_argument('--input', type=str, help='Input file for standalone report')
+    parser.add_argument('--output', type=str, help='Output file path')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('--project', type=str, help='Project name (e.g., GreenwichPeninsula, NewMalden, OvalBlockB)')
+    args = parser.parse_args()
+    
     # Setup directories
     input_dir = Path('input')
     output_dir = Path('output')
     output_dir.mkdir(exist_ok=True)
     
+    if args.standalone:
+        if not args.input:
+            print("Error: --input argument is required for standalone reports")
+            return
+            
+        input_file = Path(args.input)
+        if not input_file.exists():
+            print(f"Error: Input file {input_file} does not exist")
+            return
+            
+        # Load project configuration based on input file
+        config = load_project_config(args.project, input_file)
+        
+        output_file = Path(args.output) if args.output else output_dir / f"standalone_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        generate_standalone_report(input_file, output_file, config)
+        return
+    
+    # Regular weekly report mode
     # Load processed files record
     processed_files = load_processed_files()
     
@@ -665,12 +878,32 @@ def main():
     
     print(f"\nProcessing latest file: {latest_file.name}")
     
+    # Load project configuration based on the latest file
+    config = load_project_config(args.project, latest_file)
+    
     # Read the latest file
     try:
-        current_df = pd.read_excel(latest_file, skiprows=6)
+        if args.debug:
+            print(f"Reading Excel file: {latest_file}")
+            print("Excel settings:", config['EXCEL_SETTINGS'])
+        
+        current_df = pd.read_excel(latest_file, **config['EXCEL_SETTINGS'])
+        
+        if args.debug:
+            print("\nDataFrame info:")
+            print(current_df.info())
+            print("\nDataFrame columns:", current_df.columns.tolist())
+            print("\nFirst few rows:")
+            print(current_df.head())
+        
         # Convert all columns to string
         for col in current_df.columns:
-            current_df[col] = current_df[col].astype(str)
+            try:
+                current_df[col] = current_df[col].astype(str)
+            except Exception as e:
+                print(f"Warning: Error converting column '{col}' to string: {str(e)}")
+                if args.debug:
+                    print(f"Column '{col}' unique values:", current_df[col].unique())
         
         # Compare with previous latest data if it exists
         if previous_latest_data is not None:
@@ -694,100 +927,78 @@ def main():
             
             # Compare each row in current data
             for _, current_row in current_df.iterrows():
-                doc_ref = current_row['Doc Ref']
-                doc_path = current_row['Doc Path']
-                doc_title = current_row['Doc Title']
-                key = (doc_ref, doc_path)
-                
-                if key in prev_data_dict:
-                    # Document exists in both - check for changes
-                    prev_row = prev_data_dict[key]
-                    changes = []
+                try:
+                    doc_ref = current_row['Doc Ref']
+                    doc_path = current_row['Doc Path']
+                    doc_title = current_row['Doc Title']
+                    key = (doc_ref, doc_path)
                     
-                    # Compare each column
-                    for col in current_df.columns:
-                        if col not in ['Doc Ref', 'Doc Path']:
-                            current_val = current_row[col]
-                            prev_val = prev_row[col]
-                            
-                            if compare_values(current_val, prev_val, col):
-                                changes.append(f"{col}: {prev_val} → {current_val}")
-                    
-                    if changes:
-                        # Add to changes with all current data and change details
-                        change_row = current_row.copy()
-                        change_row['Change Type'] = 'Data Change'
-                        change_row['Change Details'] = '; '.join(changes)
-                        all_changes.append(change_row)
-                else:
-                    # Check if this Doc Ref exists in a different path
-                    matching_docs = [(ref, path, row) for (ref, path), row in prev_data_dict.items() 
-                                   if ref == doc_ref]
-                    
-                    if matching_docs:
-                        # Found a document with the same Doc Ref in a different path
-                        # Check if it's the same document by comparing titles
-                        for prev_ref, prev_path, prev_row in matching_docs:
-                            prev_title = prev_row['Doc Title']
-                            
-                            if prev_title == doc_title:
-                                # Same document, just moved
+                    if key in prev_data_dict:
+                        # Document exists in both - check for changes
+                        prev_row = prev_data_dict[key]
+                        changes = []
+                        
+                        # Compare each column
+                        for col in config['CHANGE_DETECTION']['track_columns']:
+                            if col not in config['CHANGE_DETECTION']['ignore_columns']:
+                                current_val = current_row[col]
+                                prev_val = prev_row[col]
+                                
+                                if compare_values(current_val, prev_val, col):
+                                    changes.append(f"{col}: {prev_val} → {current_val}")
+                        
+                        if changes:
+                            # Add to changes with all current data and change details
+                            change_row = current_row.copy()
+                            change_row['Change Type'] = 'Data Change'
+                            change_row['Change Details'] = '; '.join(changes)
+                            all_changes.append(change_row)
+                    else:
+                        # Check if this Doc Ref exists in a different path
+                        matching_docs = [(ref, path, row) for (ref, path), row in prev_data_dict.items() 
+                                       if ref == doc_ref]
+                        
+                        if matching_docs:
+                            # Found a document with the same Doc Ref in a different path
+                            # Check if it's the same document by comparing titles
+                            for prev_ref, prev_path, prev_row in matching_docs:
+                                prev_title = prev_row['Doc Title']
+                                
+                                if prev_title == doc_title:
+                                    # Same document, just moved
+                                    change_row = current_row.copy()
+                                    change_row['Change Type'] = 'Document Moved'
+                                    change_row['Change Details'] = f'Document moved from: {prev_path} to: {doc_path}'
+                                    all_changes.append(change_row)
+                                    break
+                            else:
+                                # No matching title found - this is a new document with duplicate Doc Ref
                                 change_row = current_row.copy()
-                                change_row['Change Type'] = 'Document Moved'
-                                change_row['Change Details'] = f'Document moved from: {prev_path} to: {doc_path}'
+                                change_row['Change Type'] = 'New Document'
+                                change_row['Change Details'] = f'New document with duplicate Doc Ref. Existing documents with this Doc Ref: {", ".join(path for _, path, _ in matching_docs)}'
                                 all_changes.append(change_row)
-                                break
                         else:
-                            # No matching title found - this is a new document with duplicate Doc Ref
+                            # New document
                             change_row = current_row.copy()
                             change_row['Change Type'] = 'New Document'
-                            change_row['Change Details'] = f'New document with duplicate Doc Ref. Existing documents with this Doc Ref: {", ".join(path for _, path, _ in matching_docs)}'
+                            change_row['Change Details'] = 'New document added'
                             all_changes.append(change_row)
-                    else:
-                        # New document
-                        change_row = current_row.copy()
-                        change_row['Change Type'] = 'New Document'
-                        change_row['Change Details'] = 'New document added'
-                        all_changes.append(change_row)
-            
-            # Check for removed documents
-            current_keys = set((ref, path) for ref, path in zip(current_df['Doc Ref'], current_df['Doc Path']))
-            for (doc_ref, doc_path), prev_row in prev_data_dict.items():
-                if (doc_ref, doc_path) not in current_keys:
-                    # Check if this Doc Ref exists in a different path
-                    matching_docs = [(ref, path, row) for (ref, path), row in zip(current_df['Doc Ref'], current_df['Doc Path'], current_df.itertuples(index=False))
-                                   if ref == doc_ref]
-                    
-                    if matching_docs:
-                        # Found a document with the same Doc Ref in a different path
-                        # Check if it's the same document by comparing titles
-                        prev_title = prev_row['Doc Title']
-                        for curr_ref, curr_path, curr_row in matching_docs:
-                            curr_title = curr_row.Doc_Title
-                            
-                            if curr_title == prev_title:
-                                # Same document, just moved
-                                change_row = prev_row.copy()
-                                change_row['Change Type'] = 'Document Moved'
-                                change_row['Change Details'] = f'Document moved from: {doc_path} to: {curr_path}'
-                                all_changes.append(change_row)
-                                break
-                        else:
-                            # No matching title found - this is a removed document
-                            change_row = prev_row.copy()
-                            change_row['Change Type'] = 'Removed Document'
-                            change_row['Change Details'] = f'Document removed. Other documents with this Doc Ref exist in: {", ".join(path for _, path, _ in matching_docs)}'
-                            all_changes.append(change_row)
-                    else:
-                        # Removed document
-                        change_row = prev_row.copy()
-                        change_row['Change Type'] = 'Removed Document'
-                        change_row['Change Details'] = 'Document removed'
-                        all_changes.append(change_row)
+                except Exception as e:
+                    print(f"Error processing row: {str(e)}")
+                    if args.debug:
+                        print("Row data:", current_row.to_dict())
+                    continue
         
         # Get counts for summary
-        counts = get_counts(current_df)
-        all_counts[latest_timestamp] = counts
+        try:
+            counts = get_counts(current_df)
+            all_counts[latest_timestamp] = counts
+        except Exception as e:
+            print(f"Error getting counts: {str(e)}")
+            if args.debug:
+                print("Current DataFrame state:")
+                print(current_df.info())
+            raise
         
         # Update processed files record
         file_key = f"{date_str}_{time_str}"  # Use the string versions
@@ -795,6 +1006,9 @@ def main():
         
     except Exception as e:
         print(f"Error processing {latest_file.name}: {str(e)}")
+        if args.debug:
+            import traceback
+            traceback.print_exc()
         return
     
     # Create summary DataFrame
@@ -815,7 +1029,7 @@ def main():
     changes_df = pd.DataFrame(all_changes) if all_changes else pd.DataFrame(columns=list(current_df.columns) + ['Change Type', 'Change Details'])
     
     # Save to Excel
-    if save_excel_with_retry(summary_df, changes_df, current_df, output_file):
+    if save_excel_with_retry(summary_df, changes_df, current_df, output_file, config):
         # Save processed files record
         save_processed_files(processed_files)
         print(f"\nSummary updated in {output_file}")
