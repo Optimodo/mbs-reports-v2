@@ -83,6 +83,7 @@ def load_project_config(project_name, input_file=None):
         'CHANGE_DETECTION': module.CHANGE_DETECTION,
         'REPORT_SETTINGS': module.REPORT_SETTINGS,
         'FILE_TYPE_SETTINGS': module.FILE_TYPE_SETTINGS if hasattr(module, 'FILE_TYPE_SETTINGS') else {},
+        'CERTIFICATE_SETTINGS': module.CERTIFICATE_SETTINGS if hasattr(module, 'CERTIFICATE_SETTINGS') else {},
         'PROJECT_TITLE': getattr(module, 'PROJECT_TITLE', project_name)
     }
     return settings

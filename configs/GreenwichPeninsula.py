@@ -50,3 +50,11 @@ FILE_TYPE_SETTINGS = {
     "include_in_summary": True,        # Whether to include in summary
     "summary_title": "File Type Summary"  # Title for the summary section
 } 
+
+# Certificate Settings
+CERTIFICATE_SETTINGS = {
+    'enabled': True,
+    'certificate_types': ['CE - Certificate (CE)'],
+    'summary_label': 'P01-PXX (Certificates)',
+    'status_suffix': ' (Certificates)'
+} 

@@ -345,7 +345,7 @@ def clean_revision(val):
     s = s.replace('\u0421', 'C')
     return s
 
-def get_counts(df):
+def get_counts(df, config=None):
     """Get counts of revisions and statuses from the dataframe"""
     counts = {}
     
@@ -353,15 +353,72 @@ def get_counts(df):
         # Clean the Rev column
         if 'Rev' in df.columns:
             df['Rev'] = df['Rev'].apply(clean_revision)
+        
+        # Check if certificate separation is enabled
+        cert_config = config.get('CERTIFICATE_SETTINGS', {}) if config else {}
+        cert_enabled = cert_config.get('enabled', False)
+        file_type_col = None
+        cert_types = []
+        
+        if cert_enabled and config:
+            file_type_settings = config.get('FILE_TYPE_SETTINGS', {})
+            file_type_col = file_type_settings.get('column_name')
+            cert_types = cert_config.get('certificate_types', [])
+        
+        # Separate certificate and non-certificate data if enabled
+        if cert_enabled and file_type_col and file_type_col in df.columns:
+            cert_data = df[df[file_type_col].isin(cert_types)]
+            non_cert_data = df[~df[file_type_col].isin(cert_types)]
+        else:
+            cert_data = pd.DataFrame()
+            non_cert_data = df
+        
         # Count revisions
-        rev_counts = df['Rev'].value_counts()
-        for rev, count in rev_counts.items():
-            counts[f'Rev_{rev}'] = count
+        if cert_enabled and not cert_data.empty:
+            # Count all revisions first
+            all_rev_counts = df['Rev'].value_counts()
+            cert_rev_counts = cert_data['Rev'].value_counts()
+            
+            # For each revision, separate certificates from non-certificates
+            for rev, total_count in all_rev_counts.items():
+                cert_count = cert_rev_counts.get(rev, 0)
+                non_cert_count = total_count - cert_count
+                
+                # Add non-certificate count (this will be the regular P01, P02, etc.)
+                if non_cert_count > 0:
+                    counts[f'Rev_{rev}'] = non_cert_count
+            
+            # Add total certificate count for P revisions only
+            p_cert_total = 0
+            for rev, cert_count in cert_rev_counts.items():
+                if rev.startswith('P') and cert_count > 0:
+                    p_cert_total += cert_count
+            
+            if p_cert_total > 0:
+                counts['Rev_P_Certificates'] = p_cert_total
+        else:
+            # Regular revision counting
+            rev_counts = df['Rev'].value_counts()
+            for rev, count in rev_counts.items():
+                counts[f'Rev_{rev}'] = count
         
         # Count statuses
-        status_counts = df['Status'].value_counts()
-        for status, count in status_counts.items():
-            counts[f'Status_{status}'] = count
+        if cert_enabled and not cert_data.empty:
+            # Count non-certificate statuses only
+            non_cert_status_counts = non_cert_data['Status'].value_counts()
+            for status, count in non_cert_status_counts.items():
+                counts[f'Status_{status}'] = count
+            
+            # Count certificate statuses with suffix (separate from regular statuses)
+            cert_status_counts = cert_data['Status'].value_counts()
+            cert_suffix = cert_config.get('status_suffix', ' (Certificates)')
+            for status, count in cert_status_counts.items():
+                counts[f'Status_{status}{cert_suffix}'] = count
+        else:
+            # Regular status counting
+            status_counts = df['Status'].value_counts()
+            for status, count in status_counts.items():
+                counts[f'Status_{status}'] = count
         
         # Count file types if the column exists
         if 'OVL - File Type' in df.columns:
@@ -554,12 +611,27 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
             # Filter and sort revision columns
             rev_columns = [col for col in all_columns if col.startswith('Rev_')]
             
+            # Check if certificate separation is enabled
+            cert_config = config.get('CERTIFICATE_SETTINGS', {})
+            cert_enabled = cert_config.get('enabled', False)
+            
             # Group revisions by type
             p_revs = sorted([col for col in rev_columns if col.startswith('Rev_P')], 
                           key=lambda x: int(x.split('_')[1][1:]) if x.split('_')[1][1:].isdigit() else float('inf'))
+            
+            # Add certificates to P revisions if enabled and present
+            if cert_enabled and 'Rev_P_Certificates' in rev_columns:
+                p_revs.append('Rev_P_Certificates')
+            
             c_revs = sorted([col for col in rev_columns if col.startswith('Rev_C')],
                           key=lambda x: int(x.split('_')[1][1:]) if x.split('_')[1][1:].isdigit() else float('inf'))
-            other_revs = sorted([col for col in rev_columns if not (col.startswith('Rev_P') or col.startswith('Rev_C'))])
+            
+            # Filter out certificates from other_revs if it's being handled with P revisions
+            other_revs = sorted([col for col in rev_columns if not (
+                col.startswith('Rev_P') or 
+                col.startswith('Rev_C') or 
+                (cert_enabled and col == 'Rev_P_Certificates')
+            )])
             
             # Function to add revision and status summary
             def add_revision_summary(start_row, rev_columns, title):
@@ -583,25 +655,69 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                     overall_summary[f'{col}{start_row + 1}'].fill = OVERALL_SUMMARY_STYLES['column_header']['fill']
                     overall_summary[f'{col}{start_row + 1}'].border = OVERALL_SUMMARY_STYLES['border']
                 
-                # Get status counts for all revisions in this group
+                # Check if this is P revision summary and certificates are enabled
+                is_p_revision = title == 'P Revision Summary'
+                cert_config = config.get('CERTIFICATE_SETTINGS', {})
+                cert_enabled = cert_config.get('enabled', False) and is_p_revision
+                
+                # Get file type column name
+                file_type_col = None
+                if cert_enabled:
+                    file_type_settings = config.get('FILE_TYPE_SETTINGS', {})
+                    file_type_col = file_type_settings.get('column_name')
+                
+                # Separate certificates from regular documents
+                if cert_enabled and file_type_col and file_type_col in latest_data.columns:
+                    cert_types = cert_config.get('certificate_types', [])
+                    # Filter data for certificates and non-certificates
+                    cert_data = latest_data[latest_data[file_type_col].isin(cert_types)]
+                    non_cert_data = latest_data[~latest_data[file_type_col].isin(cert_types)]
+                else:
+                    cert_data = pd.DataFrame()
+                    non_cert_data = latest_data
+                
+                # Get status counts for all revisions in this group (excluding certificates for P revisions)
                 status_counts = {}
                 total_count = 0
+                cert_total_count = 0
+                cert_status_counts = {}
                 
                 for rev_col in rev_columns:
                     rev_name = rev_col.replace('Rev_', '')
+                    
+                    # Skip certificate column here - we'll handle it separately
+                    if rev_col == 'Rev_P_Certificates':
+                        cert_total_count += latest_row.get(rev_col, 0)
+                        # Certificate statuses are already counted in the Summary Data table with suffix
+                        # We'll get them from the latest_row data instead of recounting
+                        continue
+                    
+                    # For regular revisions, use the separated count from summary data
                     count = latest_row.get(rev_col, 0)
                     total_count += count
                     
-                    # Filter latest data for this revision
-                    rev_data = latest_data[latest_data['Rev'] == rev_name]
-                    # Count statuses
-                    for status, count in rev_data['Status'].value_counts().items():
-                        status_counts[status] = status_counts.get(status, 0) + count
+                    # Count statuses for this revision (excluding certificates if separation is enabled)
+                    if cert_enabled and file_type_col:
+                        # Count statuses for non-certificate documents only
+                        rev_data = non_cert_data[non_cert_data['Rev'] == rev_name]
+                    else:
+                        # Count statuses for all documents of this revision
+                        rev_data = latest_data[latest_data['Rev'] == rev_name]
+                    
+                    for status, status_count in rev_data['Status'].value_counts().items():
+                        status_counts[status] = status_counts.get(status, 0) + status_count
                 
                 # Add revision data
                 row = start_row + 2
                 for rev_col in rev_columns:
+                    # Handle certificates specially
+                    if rev_col == 'Rev_P_Certificates':
+                        # Skip the regular processing for certificates - we'll handle it separately
+                        continue
+                    
                     rev_name = rev_col.replace('Rev_', '')
+                    
+                    # Always use the count from the summary data (which already has certificates separated)
                     count = latest_row.get(rev_col, 0)
                     
                     # Add revision name and count
@@ -617,9 +733,27 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                     overall_summary[f'B{row}'].border = OVERALL_SUMMARY_STYLES['border']
                     row += 1
                 
+                # Add certificate summary row if enabled and Rev_Certificates column exists
+                if cert_enabled and 'Rev_P_Certificates' in rev_columns:
+                    cert_count = latest_row.get('Rev_P_Certificates', 0)
+                    cert_label = cert_config.get('summary_label', 'P01-PXX (Certificates)')
+                    overall_summary[f'A{row}'] = cert_label
+                    overall_summary[f'B{row}'] = cert_count
+                    overall_summary[f'A{row}'].font = OVERALL_SUMMARY_STYLES['data_cell']['font']
+                    overall_summary[f'A{row}'].alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                    overall_summary[f'A{row}'].fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
+                    overall_summary[f'A{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                    overall_summary[f'B{row}'].font = OVERALL_SUMMARY_STYLES['data_cell']['font']
+                    overall_summary[f'B{row}'].alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                    overall_summary[f'B{row}'].fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
+                    overall_summary[f'B{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                    row += 1
+                    # Update cert_total_count for the total calculation
+                    cert_total_count = cert_count
+                
                 # Add total row for revisions
                 overall_summary[f'A{row}'] = 'Total'
-                overall_summary[f'B{row}'] = total_count
+                overall_summary[f'B{row}'] = total_count + (cert_total_count if cert_enabled else 0)
                 overall_summary[f'A{row}'].font = OVERALL_SUMMARY_STYLES['total_cell']['font']
                 overall_summary[f'A{row}'].alignment = OVERALL_SUMMARY_STYLES['total_cell']['alignment']
                 overall_summary[f'A{row}'].fill = OVERALL_SUMMARY_STYLES['total_cell']['fill']
@@ -641,6 +775,13 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                 status_c_statuses = []
                 other_statuses = []
                 
+                # Also create certificate status lists if enabled
+                cert_published_statuses = []
+                cert_status_a_statuses = []
+                cert_status_b_statuses = []
+                cert_status_c_statuses = []
+                cert_other_statuses = []
+                
                 # Categorize statuses
                 for status, count in status_counts.items():
                     categorized = False
@@ -661,6 +802,34 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                     if not categorized:
                         other_statuses.append((status, count))
                 
+                # Categorize certificate statuses if enabled
+                if cert_enabled:
+                    # Get certificate status counts from Summary Data table (they have suffix)
+                    cert_suffix = cert_config.get('status_suffix', ' (Certificates)')
+                    for col_name in summary_data.columns:
+                        if col_name.startswith('Status_') and col_name.endswith(cert_suffix):
+                            # Extract the base status name and get the count
+                            status = col_name.replace('Status_', '').replace(cert_suffix, '')
+                            count = latest_row.get(col_name, 0)
+                            if count > 0:
+                                categorized = False
+                                for style_name, style_config in STATUS_STYLES.items():
+                                    if any(term == status for term in style_config['search_terms']):
+                                        if style_name == 'PUBLISHED':
+                                            cert_published_statuses.append((status, count))
+                                        elif style_name == 'STATUS A':
+                                            cert_status_a_statuses.append((status, count))
+                                        elif style_name == 'STATUS B':
+                                            cert_status_b_statuses.append((status, count))
+                                        elif style_name == 'STATUS C':
+                                            cert_status_c_statuses.append((status, count))
+                                        else:
+                                            cert_other_statuses.append((status, count))
+                                        categorized = True
+                                        break
+                                if not categorized:
+                                    cert_other_statuses.append((status, count))
+                
                 # Build ordered list: Published first, then A, B, C, Other
                 ordered_statuses = (sorted(published_statuses) + 
                                   sorted(status_a_statuses) + 
@@ -668,13 +837,28 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                                   sorted(status_c_statuses) + 
                                   sorted(other_statuses))
                 
+                # Add certificate statuses with suffix if enabled
+                if cert_enabled and (cert_published_statuses or cert_status_a_statuses or cert_status_b_statuses or cert_status_c_statuses or cert_other_statuses):
+                    cert_suffix = cert_config.get('status_suffix', ' (Certificates)')
+                    cert_ordered_statuses = (sorted(cert_published_statuses) + 
+                                           sorted(cert_status_a_statuses) + 
+                                           sorted(cert_status_b_statuses) + 
+                                           sorted(cert_status_c_statuses) + 
+                                           sorted(cert_other_statuses))
+                    
+                    # Add certificate statuses with suffix to the main list
+                    for status, count in cert_ordered_statuses:
+                        ordered_statuses.append((f"{status}{cert_suffix}", count))
+                
                 for status, count in ordered_statuses:
                     total_status_count += count
                     
                     # Add status name with conditional formatting
                     status_cell = overall_summary[f'C{status_row}']
                     status_cell.value = status
-                    style = apply_status_style(status_cell, status)
+                    # Remove certificate suffix for style matching
+                    status_for_style = status.replace(cert_config.get('status_suffix', ' (Certificates)'), '') if cert_enabled else status
+                    style = apply_status_style(status_cell, status_for_style)
                     status_cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
                     status_cell.border = OVERALL_SUMMARY_STYLES['border']
                     
@@ -784,7 +968,26 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                 """Create a pie chart for status distribution of a specific revision type"""
                 # Get status data for this revision type
                 if revision_type == 'P':
-                    rev_data = latest_data[latest_data['Rev'].str.startswith('P')]
+                    # Check if certificate separation is enabled for P revisions
+                    cert_config = config.get('CERTIFICATE_SETTINGS', {})
+                    cert_enabled = cert_config.get('enabled', False)
+                    
+                    if cert_enabled:
+                        # Get file type column and exclude certificates
+                        file_type_settings = config.get('FILE_TYPE_SETTINGS', {})
+                        file_type_col = file_type_settings.get('column_name')
+                        
+                        if file_type_col and file_type_col in latest_data.columns:
+                            cert_types = cert_config.get('certificate_types', [])
+                            # Exclude certificates from P revision chart
+                            rev_data = latest_data[
+                                (latest_data['Rev'].str.startswith('P')) & 
+                                (~latest_data[file_type_col].isin(cert_types))
+                            ]
+                        else:
+                            rev_data = latest_data[latest_data['Rev'].str.startswith('P')]
+                    else:
+                        rev_data = latest_data[latest_data['Rev'].str.startswith('P')]
                 elif revision_type == 'C':
                     rev_data = latest_data[latest_data['Rev'].str.startswith('C')]
                 else:
@@ -1036,7 +1239,7 @@ def generate_standalone_report(input_file, output_file, config):
             current_df[col] = current_df[col].astype(str)
         
         # Get counts for summary
-        counts = get_counts(current_df)
+        counts = get_counts(current_df, config)
         
         # Create summary DataFrame with single row
         summary_data = [{
@@ -1057,7 +1260,6 @@ def generate_standalone_report(input_file, output_file, config):
             return True
         else:
             print("\nPlease close any open Excel files and try again.")
-            return False
             
     except Exception as e:
         print(f"Error generating standalone report: {str(e)}")
@@ -1266,7 +1468,7 @@ def main():
         
         # Get counts for summary
         try:
-            counts = get_counts(current_df)
+            counts = get_counts(current_df, config)
             all_counts[latest_timestamp] = counts
         except Exception as e:
             print(f"Error getting counts: {str(e)}")
