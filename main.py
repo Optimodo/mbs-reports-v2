@@ -6,7 +6,7 @@ import json
 from config import *
 import re
 import time
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 import openpyxl.styles
 import argparse
@@ -55,6 +55,65 @@ OVERALL_SUMMARY_STYLES = {
         top=Side(style='thin', color='000000'),
         bottom=Side(style='thin', color='000000')
     )
+}
+
+# Progression Report Status Configuration
+PROGRESSION_STATUS_ORDER = {
+    'Status A': {
+        'display_name': 'Status A',
+        'status_terms': [
+            'A - Authorized and Accepted',
+            'Accepted',
+            'A',
+            'A - Proceed',
+            'A - Proceed (Lead Reviewer)'
+        ]
+    },
+    'Status B': {
+        'display_name': 'Status B',
+        'status_terms': [
+            'B - Partial Sign Off (with comment)',
+            'Accepted with Comments',
+            'B',
+            'B - Proceed with Comments',
+            'B - Proceed with Comments (Lead Reviewer)'
+        ]
+    },
+    'Status C': {
+        'display_name': 'Status C',
+        'status_terms': [
+            'Rejected',
+            'QA - Rejected',
+            'C - Rejected',
+            'C',
+            'C - Rejected (Lead Reviewer)',
+            'C-Rejected'
+        ]
+    },
+    'QC Rejected': {
+        'display_name': 'QA/QC Rejected',
+        'status_terms': [
+            'QC Rejected',
+            'QA Rejected'
+        ]
+    },
+    'QC Checked': {
+        'display_name': 'QC Checked',
+        'status_terms': [
+            'QC Checked',
+            'QC Accepted'
+        ]
+    },
+    'Under Review': {
+        'display_name': 'Under Review/For Commenting',
+        'status_terms': [
+            'Under Review',
+            'For Status Change',
+            'For Commenting',
+            'Awaiting QC Check',
+            'Shared'
+        ]
+    }
 }
 
 # Status-based conditional formatting
@@ -1268,6 +1327,296 @@ def generate_standalone_report(input_file, output_file, config):
 def slugify(text):
     return re.sub(r'[^A-Za-z0-9]+', '_', text).strip('_')
 
+def generate_progression_report(summary_df, output_file, config, latest_data_df=None):
+    """Generate a report showing the progression of revisions and statuses over time"""
+    try:
+        # Create a new workbook or load existing
+        if os.path.exists(output_file):
+            wb = load_workbook(output_file)
+        else:
+            wb = Workbook()
+            # Remove the default 'Sheet' worksheet
+            wb.remove(wb['Sheet'])
+        
+        # Get or create the Progression Report sheet
+        if 'Progression Report' in wb.sheetnames:
+            sheet = wb['Progression Report']
+            # Get the last used column
+            last_col = 1  # Start with column A
+            for col in sheet.columns:
+                if any(cell.value for cell in col):
+                    last_col = max(last_col, col[0].column)
+            next_col = last_col + 1
+        else:
+            sheet = wb.create_sheet('Progression Report')
+            next_col = 2  # Start with column B (A is for labels)
+        
+        # Set up the sheet if it's new
+        if next_col == 2:
+            sheet.page_setup.fitToWidth = 1
+            sheet.page_setup.fitToHeight = 0
+            sheet.page_setup.horizontalCentered = True
+            sheet.page_setup.verticalCentered = True
+            sheet.page_margins = PageMargins(left=0.25, right=0.25, top=0.75, bottom=0.75, header=0.3, footer=0.3)
+            
+            # Add title
+            sheet.merge_cells('A1:Z1')
+            sheet['A1'] = f"{config.get('PROJECT_TITLE', '')} Document Register Progression Report"
+            sheet['A1'].font = Font(name='Calibri', size=14, bold=True)
+            sheet['A1'].alignment = Alignment(horizontal='center', vertical='center')
+        
+        # Get all revision and status columns
+        all_columns = summary_df.columns.tolist()
+        rev_columns = [col for col in all_columns if col.startswith('Rev_')]
+        status_columns = [col for col in all_columns if col.startswith('Status_')]
+        
+        # Sort revisions by type (P, C, other)
+        p_revs = sorted([col for col in rev_columns if col.startswith('Rev_P')], 
+                       key=lambda x: int(x.split('_')[1][1:]) if x.split('_')[1][1:].isdigit() else float('inf'))
+        c_revs = sorted([col for col in rev_columns if col.startswith('Rev_C')],
+                       key=lambda x: int(x.split('_')[1][1:]) if x.split('_')[1][1:].isdigit() else float('inf'))
+        other_revs = sorted([col for col in rev_columns if not (col.startswith('Rev_P') or col.startswith('Rev_C'))])
+        
+        # Function to get status count for a specific status group (all documents)
+        def get_status_count(status_group):
+            total = 0
+            status_terms = PROGRESSION_STATUS_ORDER[status_group]['status_terms']
+            
+            for col in status_columns:
+                # Extract the actual status name from the column name
+                status_name = col.replace('Status_', '')
+                if status_name in status_terms:
+                    total += summary_df.iloc[-1].get(col, 0)
+            return total
+        
+        # Function to get status count for a specific status group filtered by revision type
+        def get_filtered_status_count(status_group, revision_type):
+            if latest_data_df is None:
+                # Fallback to unfiltered count if no latest data available
+                return get_status_count(status_group)
+            
+            total = 0
+            status_terms = PROGRESSION_STATUS_ORDER[status_group]['status_terms']
+            
+            # Filter data by revision type
+            if revision_type == 'P':
+                filtered_data = latest_data_df[latest_data_df['Rev'].str.startswith('P', na=False)]
+            elif revision_type == 'C':
+                filtered_data = latest_data_df[latest_data_df['Rev'].str.startswith('C', na=False)]
+            else:
+                # For other revision types, return 0 or handle as needed
+                return 0
+            
+            # Count documents with matching status
+            for status_term in status_terms:
+                count = len(filtered_data[filtered_data['Status'] == status_term])
+                total += count
+            
+            return total
+        
+        # Function to get count of uncategorized statuses for a revision type
+        def get_other_status_count(revision_type):
+            if latest_data_df is None:
+                return 0
+            
+            # Filter data by revision type
+            if revision_type == 'P':
+                filtered_data = latest_data_df[latest_data_df['Rev'].str.startswith('P', na=False)]
+            elif revision_type == 'C':
+                filtered_data = latest_data_df[latest_data_df['Rev'].str.startswith('C', na=False)]
+            else:
+                return 0
+            
+            # Get all defined status terms
+            all_defined_statuses = set()
+            for status_group in PROGRESSION_STATUS_ORDER.values():
+                all_defined_statuses.update(status_group['status_terms'])
+            
+            # Count documents with statuses not in the defined list
+            other_count = 0
+            for status in filtered_data['Status'].unique():
+                if status not in all_defined_statuses:
+                    count = len(filtered_data[filtered_data['Status'] == status])
+                    other_count += count
+            
+            return other_count
+        
+        # Start row for data
+        current_row = 3
+        
+        # Function to add a section header
+        def add_section_header(title, row):
+            if next_col == 2:  # Only add headers for new sheets
+                sheet.merge_cells(f'A{row}:Z{row}')
+                sheet[f'A{row}'] = title
+                sheet[f'A{row}'].font = Font(name='Calibri', size=12, bold=True)
+                sheet[f'A{row}'].fill = PatternFill(start_color='F0F0F0', end_color='F0F0F0', fill_type='solid')
+            return row + 1
+        
+        # Function to add column headers
+        def add_column_headers(row):
+            # Add date header for the new column
+            date_col = chr(ord('A') + next_col - 1)
+            latest_data = summary_df.iloc[-1]  # Get the latest data
+            sheet[f'{date_col}{row}'] = latest_data['Date']  # Only use the date
+            sheet[f'{date_col}{row}'].font = Font(name='Calibri', size=11, bold=True)
+            sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            return row + 1
+        
+        # Function to add data rows
+        def add_data_rows(columns, start_row, title_prefix=''):
+            row = start_row
+            latest_data = summary_df.iloc[-1]  # Get the latest data
+            
+            for col in columns:
+                # Add row header if it's a new sheet
+                if next_col == 2:
+                    sheet[f'A{row}'] = f"{title_prefix}{col.replace('Rev_', '').replace('Status_', '')}"
+                    sheet[f'A{row}'].font = Font(name='Calibri', size=11)
+                    sheet[f'A{row}'].alignment = Alignment(horizontal='left', vertical='center')
+                
+                # Add data for the new column
+                date_col = chr(ord('A') + next_col - 1)
+                value = latest_data.get(col, 0)
+                sheet[f'{date_col}{row}'] = value
+                sheet[f'{date_col}{row}'].font = Font(name='Calibri', size=11)
+                sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center')
+                
+                row += 1
+            return row
+        
+        # Function to add status data rows with revision filtering
+        def add_status_data_rows(start_row, revision_type):
+            row = start_row
+            latest_data = summary_df.iloc[-1]  # Get the latest data
+            
+            # Add each status in the defined order
+            for status_group in PROGRESSION_STATUS_ORDER:
+                # Add row header if it's a new sheet
+                if next_col == 2:
+                    sheet[f'A{row}'] = PROGRESSION_STATUS_ORDER[status_group]['display_name']
+                    sheet[f'A{row}'].font = Font(name='Calibri', size=11)
+                    sheet[f'A{row}'].alignment = Alignment(horizontal='left', vertical='center')
+                
+                # Add filtered data for the new column
+                date_col = chr(ord('A') + next_col - 1)
+                value = get_filtered_status_count(status_group, revision_type)
+                sheet[f'{date_col}{row}'] = value
+                sheet[f'{date_col}{row}'].font = Font(name='Calibri', size=11)
+                sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center')
+                
+                row += 1
+            
+            # Add "Other Status" row for uncategorized statuses
+            other_count = get_other_status_count(revision_type)
+            if other_count > 0:
+                # Add row header if it's a new sheet
+                if next_col == 2:
+                    sheet[f'A{row}'] = 'Other Status'
+                    sheet[f'A{row}'].font = Font(name='Calibri', size=11)
+                    sheet[f'A{row}'].alignment = Alignment(horizontal='left', vertical='center')
+                
+                # Add filtered data for the new column
+                date_col = chr(ord('A') + next_col - 1)
+                sheet[f'{date_col}{row}'] = other_count
+                sheet[f'{date_col}{row}'].font = Font(name='Calibri', size=11)
+                sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center')
+                
+                row += 1
+            
+            return row
+        
+        # Function to calculate total for a set of columns
+        def calculate_total(columns):
+            total = 0
+            latest_data = summary_df.iloc[-1]
+            for col in columns:
+                total += latest_data.get(col, 0)
+            return total
+        
+        # Function to add a total row
+        def add_total_row(start_row, total_value, label='Total'):
+            # Add row header if it's a new sheet
+            if next_col == 2:
+                sheet[f'A{start_row}'] = label
+                sheet[f'A{start_row}'].font = Font(name='Calibri', size=11, bold=True)
+                sheet[f'A{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
+                sheet[f'A{start_row}'].fill = PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
+            
+            # Add total data for the new column
+            date_col = chr(ord('A') + next_col - 1)
+            sheet[f'{date_col}{start_row}'] = total_value
+            sheet[f'{date_col}{start_row}'].font = Font(name='Calibri', size=11, bold=True)
+            sheet[f'{date_col}{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
+            sheet[f'{date_col}{start_row}'].fill = PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
+            
+            return start_row + 1
+        
+        # Add P Revision section
+        current_row = add_section_header('P Revision Progression', current_row)
+        current_row = add_column_headers(current_row)
+        current_row = add_data_rows(p_revs, current_row)
+        # Add total row for P revisions
+        p_total = calculate_total(p_revs)
+        current_row = add_total_row(current_row, p_total, 'P Revisions Total')
+        current_row += 1  # Add spacing
+        
+        # Add P Revision Status section
+        current_row = add_section_header('P Revision Status Progression', current_row)
+        current_row = add_column_headers(current_row)
+        current_row = add_status_data_rows(current_row, 'P')
+        # Add total row for P revision statuses
+        p_status_total = sum(get_filtered_status_count(status_group, 'P') for status_group in PROGRESSION_STATUS_ORDER) + get_other_status_count('P')
+        current_row = add_total_row(current_row, p_status_total, 'P Status Total')
+        current_row += 1  # Add spacing
+        
+        # Add C Revision section
+        current_row = add_section_header('C Revision Progression', current_row)
+        current_row = add_column_headers(current_row)
+        current_row = add_data_rows(c_revs, current_row)
+        # Add total row for C revisions
+        c_total = calculate_total(c_revs)
+        current_row = add_total_row(current_row, c_total, 'C Revisions Total')
+        current_row += 1  # Add spacing
+        
+        # Add C Revision Status section
+        current_row = add_section_header('C Revision Status Progression', current_row)
+        current_row = add_column_headers(current_row)
+        current_row = add_status_data_rows(current_row, 'C')
+        # Add total row for C revision statuses
+        c_status_total = sum(get_filtered_status_count(status_group, 'C') for status_group in PROGRESSION_STATUS_ORDER) + get_other_status_count('C')
+        current_row = add_total_row(current_row, c_status_total, 'C Status Total')
+        
+        # Auto-adjust column widths
+        for column in sheet.columns:
+            max_length = 0
+            column_letter = None
+            for cell in column:
+                if hasattr(cell, 'column_letter'):
+                    column_letter = cell.column_letter
+                    break
+            
+            if not column_letter:
+                continue
+            
+            for cell in column:
+                try:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+                except:
+                    pass
+            
+            adjusted_width = max(8, max_length + 2)
+            sheet.column_dimensions[column_letter].width = adjusted_width
+        
+        # Save the workbook
+        wb.save(output_file)
+        return True
+        
+    except Exception as e:
+        print(f"Error generating progression report: {str(e)}")
+        return False
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Document Register Report Generator')
@@ -1517,6 +1866,13 @@ def main():
         # Save processed files record
         save_processed_files(processed_files)
         print(f"\nSummary updated in {output_file}")
+        
+        # Generate progression report
+        progression_output = output_dir / f"{project_slug}_progression.xlsx"
+        if generate_progression_report(summary_df, progression_output, config, current_df):
+            print(f"Progression report generated in {progression_output}")
+        else:
+            print("Failed to generate progression report")
     else:
         print("\nPlease close any open Excel files and try again.")
 
