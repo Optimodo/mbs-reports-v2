@@ -117,27 +117,39 @@ PROGRESSION_STATUS_ORDER = {
             'Awaiting QC Check',
             'Shared'
         ]
+    },
+    'Preliminary': {
+        'display_name': 'Preliminary',
+        'status_terms': [
+            'Preliminary'
+        ]
+    },
+    'Other': {
+        'display_name': 'Other',
+        'status_terms': [
+            'Other'
+        ]
     }
 }
 
 # Status-based conditional formatting
 STATUS_STYLES = {
     'STATUS A': {
-        'search_terms': ['A - Authorized and Accepted', 'Accepted', 'A', 'A - Proceed', 'A - Proceed (Lead Reviewer)'],
+        'search_terms': ['A - Authorized and Accepted', 'Accepted', 'A', 'A - Proceed', 'A - Proceed (Lead Reviewer)', 'Status A'],
         'style': {
             'font': Font(name='Calibri', size=11, bold=True, color='000000'),
             'fill': PatternFill(start_color='25E82C', end_color='25E82C', fill_type='solid')
         }
     },
     'STATUS B': {
-        'search_terms': ['B - Partial Sign Off (with comment)', 'Accepted with Comments', 'B', 'B - Proceed with Comments', 'B - Proceed with Comments (Lead Reviewer)'],
+        'search_terms': ['B - Partial Sign Off (with comment)', 'Accepted with Comments', 'B', 'B - Proceed with Comments', 'B - Proceed with Comments (Lead Reviewer)', 'Status B'],
         'style': {
             'font': Font(name='Calibri', size=11, bold=True, color='000000'),
             'fill': PatternFill(start_color='EDDDA1', end_color='EDDDA1', fill_type='solid')
         }
     },
     'STATUS C': {
-        'search_terms': ['Rejected', 'QA - Rejected', 'C - Rejected', 'QA Rejected', 'C', 'C - Rejected (Lead Reviewer)', 'C-Rejected',],
+        'search_terms': ['Rejected', 'QA - Rejected', 'C - Rejected', 'QA Rejected', 'C', 'C - Rejected (Lead Reviewer)', 'C-Rejected', 'Status C'],
         'style': {
             'font': Font(name='Calibri', size=11, bold=True, color='000000'),
             'fill': PatternFill(start_color='ED1111', end_color='ED1111', fill_type='solid')
@@ -169,6 +181,20 @@ STATUS_STYLES = {
         'style': {
             'font': Font(name='Calibri', size=11, bold=True, color='000000'),
             'fill': PatternFill(start_color='E0F090', end_color='E0F090', fill_type='solid')
+        }
+    },
+    'PRELIMINARY': {
+        'search_terms': ['Preliminary'],
+        'style': {
+            'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+            'fill': PatternFill(start_color='87CEEB', end_color='87CEEB', fill_type='solid')  # Light blue
+        }
+    },
+    'OTHER': {
+        'search_terms': ['Other'],
+        'style': {
+            'font': Font(name='Calibri', size=11, bold=True, color='000000'),
+            'fill': PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')  # Light gray
         }
     },
     # 'SUBMITTED': {
@@ -228,7 +254,7 @@ class DocumentRegisterProcessor:
             json.dump(self.history, f, indent=2)
 
     def process_excel_file(self, file_path):
-        """Process a single Excel file and track changes"""
+        """Process a single Excel file or CSV file and track changes"""
         # Skip temporary Excel files
         if file_path.name.startswith('~$'):
             print(f"Skipping temporary file: {file_path.name}")
@@ -238,33 +264,57 @@ class DocumentRegisterProcessor:
         current_hash = self._get_file_hash(file_path)
         
         try:
-            # Read the Excel file
-            df = pd.read_excel(file_path, **EXCEL_SETTINGS)
+            # Determine file type and read accordingly
+            file_path_str = str(file_path).lower()
             
-            # Get the timestamp from cell B4
-            timestamp_df = pd.read_excel(file_path, usecols="B", nrows=4, header=None)
-            timestamp_str = timestamp_df.iloc[3, 0]  # Get value from B4
-            
-            # Extract the date and time from the timestamp string
-            try:
-                # Split by commas and get the third part (date and time)
-                parts = timestamp_str.split(',')
-                if len(parts) >= 3:
-                    date_time_part = parts[2].strip()
-                    # Split by space to separate date and time
-                    date_time = date_time_part.split()
-                    if len(date_time) >= 2:
-                        file_date = datetime.strptime(date_time[0], '%d-%b-%Y')
-                        file_time = datetime.strptime(date_time[1], '%H:%M').time()
-                    else:
-                        print(f"Warning: Could not parse date/time from {file_name}")
+            if file_path_str.endswith('.csv'):
+                # Load project config to get CSV settings
+                from config import load_project_config
+                config = load_project_config(None, file_path)
+                
+                # Process CSV file
+                df = process_csv_file(file_path, config)
+                
+                # Get timestamp from CSV
+                date_str, time_str = get_file_timestamp(file_path)
+                if date_str and time_str:
+                    try:
+                        file_date = datetime.strptime(date_str, '%d-%b-%Y')
+                        file_time = datetime.strptime(time_str, '%H:%M').time()
+                    except Exception as e:
+                        print(f"Warning: Error parsing date from {file_name}: {str(e)}")
                         file_date = datetime.min
                 else:
-                    print(f"Warning: Could not parse timestamp in {file_name}")
+                    print(f"Warning: Could not parse timestamp from {file_name}")
                     file_date = datetime.min
-            except Exception as e:
-                print(f"Warning: Error parsing date from {file_name}: {str(e)}")
-                file_date = datetime.min
+            else:
+                # Excel file
+                df = pd.read_excel(file_path, **EXCEL_SETTINGS)
+                
+                # Get the timestamp from cell B4
+                timestamp_df = pd.read_excel(file_path, usecols="B", nrows=4, header=None)
+                timestamp_str = timestamp_df.iloc[3, 0]  # Get value from B4
+                
+                # Extract the date and time from the timestamp string
+                try:
+                    # Split by commas and get the third part (date and time)
+                    parts = timestamp_str.split(',')
+                    if len(parts) >= 3:
+                        date_time_part = parts[2].strip()
+                        # Split by space to separate date and time
+                        date_time = date_time_part.split()
+                        if len(date_time) >= 2:
+                            file_date = datetime.strptime(date_time[0], '%d-%b-%Y')
+                            file_time = datetime.strptime(date_time[1], '%H:%M').time()
+                        else:
+                            print(f"Warning: Could not parse date/time from {file_name}")
+                            file_date = datetime.min
+                    else:
+                        print(f"Warning: Could not parse timestamp in {file_name}")
+                        file_date = datetime.min
+                except Exception as e:
+                    print(f"Warning: Error parsing date from {file_name}: {str(e)}")
+                    file_date = datetime.min
             
             # Save the processed data with timestamp
             self._save_processed_data(file_name, df, file_date)
@@ -377,25 +427,47 @@ class DocumentRegisterProcessor:
         self.save_history()
 
 def get_file_timestamp(file_path):
-    """Get the timestamp from cell B4 of the Excel file"""
+    """Get the timestamp from cell B4 of the Excel file or from CSV file"""
     try:
-        # Read just cell B4 (which is merged from B to I)
-        timestamp_df = pd.read_excel(file_path, usecols="B", nrows=4, header=None)
-        timestamp_str = timestamp_df.iloc[3, 0]
+        file_path_str = str(file_path).lower()
         
-        # Split by commas and get the third part (date and time)
-        parts = timestamp_str.split(',')
-        if len(parts) >= 3:
-            date_time_part = parts[2].strip()
-            # Split by space to separate date and time
-            date_time = date_time_part.split()
-            if len(date_time) >= 2:
-                date_str = date_time[0]  # Keep as text
-                time_str = date_time[1]  # Keep as text
-                return date_str, time_str
-        
-        print(f"Warning: Could not parse timestamp from {file_path.name}")
-        return None, None
+        if file_path_str.endswith('.csv'):
+            # For CSV files, get timestamp from 'Report Created' column
+            df = pd.read_csv(file_path, nrows=1)
+            if 'Report Created' in df.columns and not df['Report Created'].isna().all():
+                timestamp_str = df['Report Created'].iloc[0]
+                if pd.notna(timestamp_str):
+                    # Parse the timestamp (format: "08-07-2025 07:03")
+                    try:
+                        # Split by space to separate date and time
+                        date_part, time_part = timestamp_str.split(' ')
+                        # Parse date (DD-MM-YYYY format)
+                        from datetime import datetime
+                        date_obj = datetime.strptime(date_part, '%d-%m-%Y')
+                        time_obj = datetime.strptime(time_part, '%H:%M').time()
+                        return date_obj.strftime('%d-%b-%Y'), time_obj.strftime('%H:%M')
+                    except Exception as e:
+                        print(f"Warning: Could not parse CSV timestamp '{timestamp_str}': {str(e)}")
+                        return None, None
+            return None, None
+        else:
+            # Excel file - Read just cell B4 (which is merged from B to I)
+            timestamp_df = pd.read_excel(file_path, usecols="B", nrows=4, header=None)
+            timestamp_str = timestamp_df.iloc[3, 0]
+            
+            # Split by commas and get the third part (date and time)
+            parts = timestamp_str.split(',')
+            if len(parts) >= 3:
+                date_time_part = parts[2].strip()
+                # Split by space to separate date and time
+                date_time = date_time_part.split()
+                if len(date_time) >= 2:
+                    date_str = date_time[0]  # Keep as text
+                    time_str = date_time[1]  # Keep as text
+                    return date_str, time_str
+            
+            print(f"Warning: Could not parse timestamp from {file_path.name}")
+            return None, None
     except Exception as e:
         print(f"Error reading timestamp from {file_path.name}: {str(e)}")
         return None, None
@@ -407,6 +479,56 @@ def clean_revision(val):
     # Replace Cyrillic 'С' (U+0421) with Latin 'C'
     s = s.replace('\u0421', 'C')
     return s
+
+def process_csv_file(file_path, config):
+    """Process a CSV file and transform it to match expected format"""
+    try:
+        # Read the CSV file
+        csv_settings = config.get('CSV_SETTINGS', {})
+        df = pd.read_csv(file_path, **csv_settings)
+        
+        # Apply MBS filtering if enabled
+        mbs_filter = config.get('MBS_FILTER')
+        if mbs_filter and mbs_filter.get('enabled', False):
+            filter_mask = pd.Series([False] * len(df), index=df.index)
+            
+            for column in mbs_filter.get('search_columns', []):
+                if column in df.columns:
+                    case_sensitive = mbs_filter.get('case_sensitive', False)
+                    mask = df[column].str.contains('MBS', case=not case_sensitive, na=False)
+                    filter_mask = filter_mask | mask
+            
+            df = df[filter_mask].copy()
+            print(f"Filtered to {len(df)} MBS records")
+        
+        # Apply column mappings if provided
+        column_mappings = config.get('COLUMN_MAPPINGS')
+        if column_mappings:
+            for target_col, source_col in column_mappings.items():
+                if source_col in df.columns:
+                    df[target_col] = df[source_col]
+        
+        # Apply custom status mapping for Holloway Park
+        if config.get('PROJECT_TITLE') == 'Holloway Park':
+            # Import the custom status mapping function
+            try:
+                from configs.HollowayPark import map_holloway_park_status
+                if 'Status' in df.columns or 'Design Status' in df.columns:
+                    # Apply the custom status mapping function to each row
+                    df['Status'] = df.apply(map_holloway_park_status, axis=1)
+                    print("Applied custom Holloway Park status mapping")
+            except ImportError:
+                print("Warning: Could not import Holloway Park status mapping function")
+        
+        # Clean revision column
+        if 'Rev' in df.columns:
+            df['Rev'] = df['Rev'].apply(clean_revision)
+        
+        return df
+        
+    except Exception as e:
+        print(f"Error processing CSV file {file_path}: {str(e)}")
+        raise
 
 def get_counts(df, config=None):
     """Get counts of revisions and statuses from the dataframe"""
@@ -926,6 +1048,9 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
             
             # Add other revision summary
             current_row = add_revision_summary(current_row, other_revs, 'Other Revision Summary')
+            
+            # Initialize row variable for border formatting
+            row = current_row
             
             # Add file type summary section if enabled in config
             if config.get('FILE_TYPE_SETTINGS', {}).get('include_in_summary', False):
@@ -1485,10 +1610,29 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 # For other revision types, return 0 or handle as needed
                 return 0
             
-            # Count documents with matching status
-            for status_term in status_terms:
-                count = len(filtered_data[filtered_data['Status'] == status_term])
-                total += count
+            # Check if this is Holloway Park project (custom status mapping)
+            is_holloway_park = config.get('PROJECT_TITLE') == 'Holloway Park'
+            
+            if is_holloway_park:
+                # For Holloway Park, map status group names to the custom mapped statuses
+                status_mapping = {
+                    'Status A': 'Status A',
+                    'Status B': 'Status B', 
+                    'Status C': 'Status C',
+                    'Preliminary': 'Preliminary',
+                    'Other': 'Other'
+                }
+                
+                # Get the mapped status name for this status group
+                mapped_status = status_mapping.get(status_group)
+                if mapped_status:
+                    count = len(filtered_data[filtered_data['Status'] == mapped_status])
+                    total += count
+            else:
+                # For other projects, use the original logic
+                for status_term in status_terms:
+                    count = len(filtered_data[filtered_data['Status'] == status_term])
+                    total += count
             
             return total
         
@@ -1505,19 +1649,28 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
             else:
                 return 0
             
-            # Get all defined status terms
-            all_defined_statuses = set()
-            for status_group in PROGRESSION_STATUS_ORDER.values():
-                all_defined_statuses.update(status_group['status_terms'])
+            # Check if this is Holloway Park project (custom status mapping)
+            is_holloway_park = config.get('PROJECT_TITLE') == 'Holloway Park'
             
-            # Count documents with statuses not in the defined list
-            other_count = 0
-            for status in filtered_data['Status'].unique():
-                if status not in all_defined_statuses:
-                    count = len(filtered_data[filtered_data['Status'] == status])
-                    other_count += count
-            
-            return other_count
+            if is_holloway_park:
+                # For Holloway Park, 'Other' status is already counted in the status groups
+                # So we return 0 to avoid double counting
+                return 0
+            else:
+                # For other projects, use the original logic
+                # Get all defined status terms
+                all_defined_statuses = set()
+                for status_group in PROGRESSION_STATUS_ORDER.values():
+                    all_defined_statuses.update(status_group['status_terms'])
+                
+                # Count documents with statuses not in the defined list
+                other_count = 0
+                for status in filtered_data['Status'].unique():
+                    if status not in all_defined_statuses:
+                        count = len(filtered_data[filtered_data['Status'] == status])
+                        other_count += count
+                
+                return other_count
         
         # Start row for data
         current_row = 3
@@ -1851,21 +2004,26 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 
                 row += 1
             
-            # Always add "Other Status" row to maintain consistent structure
-            # Add row header if it's a new sheet
-            if next_col == 2:
-                sheet[f'A{row}'] = 'Other Status'
-                sheet[f'A{row}'].font = Font(name='Calibri', size=11)
-                sheet[f'A{row}'].alignment = Alignment(horizontal='left', vertical='center')
+            # Check if this is Holloway Park project
+            is_holloway_park = config.get('PROJECT_TITLE') == 'Holloway Park'
             
-            # Add filtered data for the new column (always add, even if 0)
-            date_col = chr(ord('A') + next_col - 1)
-            other_count = get_other_status_count(revision_type)
-            sheet[f'{date_col}{row}'] = other_count
-            sheet[f'{date_col}{row}'].font = Font(name='Calibri', size=11)
-            sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center')
-            
-            row += 1
+            # For Holloway Park, skip the "Other Status" row since 'Other' is already included in status groups
+            # For other projects, add "Other Status" row to maintain consistent structure
+            if not is_holloway_park:
+                # Add row header if it's a new sheet
+                if next_col == 2:
+                    sheet[f'A{row}'] = 'Other Status'
+                    sheet[f'A{row}'].font = Font(name='Calibri', size=11)
+                    sheet[f'A{row}'].alignment = Alignment(horizontal='left', vertical='center')
+                
+                # Add filtered data for the new column (always add, even if 0)
+                date_col = chr(ord('A') + next_col - 1)
+                other_count = get_other_status_count(revision_type)
+                sheet[f'{date_col}{row}'] = other_count
+                sheet[f'{date_col}{row}'].font = Font(name='Calibri', size=11)
+                sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center')
+                
+                row += 1
             
             return row
         
@@ -2045,24 +2203,34 @@ def get_project_files_with_timestamps(project_input_dir):
     """Get all Excel files in a project directory with their timestamps, sorted by date"""
     files_with_timestamps = []
     
-    for file_path in project_input_dir.glob("*.xlsx"):
-        if file_path.name.startswith('~$'):  # Skip temporary files
-            continue
-            
-        # Get timestamp from B4
-        date_str, time_str = get_file_timestamp(file_path)
-        if not date_str or not time_str:
-            print(f"Skipping {file_path.name} - could not read timestamp")
-            continue
-            
-        # Convert to datetime for comparison
-        try:
-            date = datetime.strptime(date_str, '%d-%b-%Y')
-            time = datetime.strptime(time_str, '%H:%M').time()
-            files_with_timestamps.append((file_path, date, time, date_str, time_str))
-        except ValueError as e:
-            print(f"Warning: Could not parse date/time from {file_path.name}: {str(e)}")
-            continue
+    # Check if this is Holloway Park project (by folder name)
+    is_holloway_park = 'HP' in str(project_input_dir) or 'holloway' in str(project_input_dir).lower()
+    
+    # Get file patterns to search for
+    if is_holloway_park:
+        file_patterns = ["*.xlsx", "*.csv"]
+    else:
+        file_patterns = ["*.xlsx"]
+    
+    for pattern in file_patterns:
+        for file_path in project_input_dir.glob(pattern):
+            if file_path.name.startswith('~$'):  # Skip temporary files
+                continue
+                
+            # Get timestamp from B4 (Excel) or Report Created column (CSV)
+            date_str, time_str = get_file_timestamp(file_path)
+            if not date_str or not time_str:
+                print(f"Skipping {file_path.name} - could not read timestamp")
+                continue
+                
+            # Convert to datetime for comparison
+            try:
+                date = datetime.strptime(date_str, '%d-%b-%Y')
+                time = datetime.strptime(time_str, '%H:%M').time()
+                files_with_timestamps.append((file_path, date, time, date_str, time_str))
+            except ValueError as e:
+                print(f"Warning: Could not parse date/time from {file_path.name}: {str(e)}")
+                continue
     
     # Sort by date and time (oldest first)
     files_with_timestamps.sort(key=lambda x: (x[1], x[2]))
@@ -2079,7 +2247,8 @@ def detect_project_files():
     project_folders = {
         'OVB': input_dir / 'OVB',
         'NM': input_dir / 'NM', 
-        'GP': input_dir / 'GP'
+        'GP': input_dir / 'GP',
+        'HP': input_dir / 'HP'
     }
     
     # Load existing processed files record
@@ -2170,17 +2339,20 @@ def get_project_selection():
     print("1. GreenwichPeninsula (GP)")
     print("2. NewMalden (NM)")
     print("3. OvalBlockB (OVB)")
+    print("4. HollowayPark (HP)")
     
     while True:
-        project_choice = input("Select project (1-3): ").strip()
+        project_choice = input("Select project (1-4): ").strip()
         if project_choice == '1':
             return 'GreenwichPeninsula', 'GP'
         elif project_choice == '2':
             return 'NewMalden', 'NM'
         elif project_choice == '3':
             return 'OvalBlockB', 'OVB'
+        elif project_choice == '4':
+            return 'HollowayPark', 'HP'
         else:
-            print("Invalid choice. Please enter 1, 2, or 3.")
+            print("Invalid choice. Please enter 1, 2, 3, or 4.")
 
 def get_standalone_input():
     """Get input file and project for standalone report"""
@@ -2211,10 +2383,11 @@ def get_standalone_input():
     print("1. GreenwichPeninsula")
     print("2. NewMalden") 
     print("3. OvalBlockB")
-    print("4. Auto-detect (recommended)")
+    print("4. HollowayPark")
+    print("5. Auto-detect (recommended)")
     
     while True:
-        project_choice = input("Select project (1-4): ").strip()
+        project_choice = input("Select project (1-5): ").strip()
         if project_choice == '1':
             project = 'GreenwichPeninsula'
             break
@@ -2225,10 +2398,13 @@ def get_standalone_input():
             project = 'OvalBlockB'
             break
         elif project_choice == '4':
+            project = 'HollowayPark'
+            break
+        elif project_choice == '5':
             project = None  # Auto-detect
             break
         else:
-            print("Invalid choice. Please enter 1, 2, 3, or 4.")
+            print("Invalid choice. Please enter 1, 2, 3, 4, or 5.")
     
     return input_path, project
 
@@ -2436,7 +2612,8 @@ def process_all_projects():
     project_folders = {
         'OVB': input_dir / 'OVB',
         'NM': input_dir / 'NM', 
-        'GP': input_dir / 'GP'
+        'GP': input_dir / 'GP',
+        'HP': input_dir / 'HP'
     }
     
     # Load processed files record
@@ -2452,7 +2629,8 @@ def process_all_projects():
         project_names = {
             'OVB': 'OvalBlockB',
             'NM': 'NewMalden',
-            'GP': 'GreenwichPeninsula'
+            'GP': 'GreenwichPeninsula',
+            'HP': 'HollowayPark'
         }
         
         project_name = project_names.get(project_code, project_code)
@@ -2508,6 +2686,9 @@ def process_project_files(project_name, project_input_dir, output_dir, processed
     if project_name not in processed_files:
         processed_files[project_name] = {}
     
+    # Track if any files were processed
+    files_processed = False
+    
     for file_path, date, time, date_str, time_str in files_with_timestamps:
         file_key = f"{date_str}_{time_str}"
         if file_path.name in processed_files[project_name]:
@@ -2519,12 +2700,23 @@ def process_project_files(project_name, project_input_dir, output_dir, processed
         print(f"\nProcessing: {file_path.name} ({date_str} {time_str})")
         config = load_project_config(project_name, file_path)
         try:
-            current_df = pd.read_excel(file_path, **config['EXCEL_SETTINGS'])
+            # Determine file type and read accordingly
+            file_path_str = str(file_path).lower()
+            
+            if file_path_str.endswith('.csv'):
+                # Process CSV file
+                current_df = process_csv_file(file_path, config)
+            else:
+                # Process Excel file
+                current_df = pd.read_excel(file_path, **config['EXCEL_SETTINGS'])
+            
+            # Convert all columns to string
             for col in current_df.columns:
                 try:
                     current_df[col] = current_df[col].astype(str)
                 except Exception as e:
                     print(f"Warning: Error converting column '{col}' to string: {str(e)}")
+            
             try:
                 counts = get_counts(current_df, config)
                 all_counts[(date, time)] = counts
@@ -2534,35 +2726,54 @@ def process_project_files(project_name, project_input_dir, output_dir, processed
             processed_files[project_name][file_path.name] = file_key
             latest_data_df = current_df.copy()
             previous_latest_data = current_df.copy()
+            files_processed = True
+            
+            # Generate progression report for this file (add new column)
+            progression_output = output_dir / f"{project_slug}_progression.xlsx"
+            
+            # Create a single-row summary DataFrame for this file
+            file_summary_data = [{
+                'Date': date.strftime('%d-%b-%Y'),
+                'Time': time.strftime('%H:%M')
+            }]
+            for key in sorted(counts.keys()):
+                file_summary_data[0][key] = counts.get(key, 0)
+            file_summary_df = pd.DataFrame(file_summary_data)
+            
+            print(f"Adding progression data for {date_str} {time_str}...")
+            if generate_progression_report(file_summary_df, progression_output, config, current_df):
+                print(f"Progression report updated with new column")
+            else:
+                print("Failed to update progression report")
+                
         except Exception as e:
             print(f"Error processing {file_path.name}: {str(e)}")
             continue
-        summary_data = []
-        for (date, time) in sorted(all_counts.keys()):
-            row = {
-                'Date': date.strftime('%d-%b-%Y'),
-                'Time': time.strftime('%H:%M')
-            }
-            counts = all_counts[(date, time)]
-            for key in sorted(counts.keys()):
-                row[key] = counts.get(key, 0)
-            summary_data.append(row)
-        summary_df = pd.DataFrame(summary_data)
-        # Save to Excel (summary only)
-        if save_excel_with_retry(summary_df, None, latest_data_df, project_output_file, config):
-            print(f"\nSummary updated in {project_output_file}")
-            progression_output = output_dir / f"{project_slug}_progression.xlsx"
-            print(f"Generating progression report for {project_name} with {len(summary_df)} data points...")
-            if generate_progression_report(summary_df, progression_output, config, latest_data_df):
-                print(f"Progression report updated in {progression_output}")
-            else:
-                print("Failed to generate progression report")
-                print(f"Debug: summary_df shape: {summary_df.shape}")
-                print(f"Debug: summary_df columns: {summary_df.columns.tolist()}")
-                print(f"Debug: latest_data_df shape: {latest_data_df.shape if latest_data_df is not None else 'None'}")
-        else:
-            print("\nPlease close any open Excel files and try again.")
-            return False
+
+    # Guard: If nothing was processed, don't continue
+    if not files_processed or latest_data_df is None or 'config' not in locals():
+        print("No new files processed for this project.")
+        return False
+
+    summary_data = []
+    for (date, time) in sorted(all_counts.keys()):
+        row = {
+            'Date': date.strftime('%d-%b-%Y'),
+            'Time': time.strftime('%H:%M')
+        }
+        counts = all_counts[(date, time)]
+        for key in sorted(counts.keys()):
+            row[key] = counts.get(key, 0)
+        summary_data.append(row)
+    summary_df = pd.DataFrame(summary_data)
+    
+    # Save to Excel (summary only)
+    if save_excel_with_retry(summary_df, None, latest_data_df, project_output_file, config):
+        print(f"\nSummary updated in {project_output_file}")
+    else:
+        print("\nPlease close any open Excel files and try again.")
+        return False
+        
     # After all files are processed, fill empty cells in the progression report
     progression_output = output_dir / f"{project_slug}_progression.xlsx"
     fill_empty_cells_with_zeros_in_file(str(progression_output))
@@ -2583,7 +2794,8 @@ def process_single_project(project_name, project_code):
     project_folders = {
         'OVB': input_dir / 'OVB',
         'NM': input_dir / 'NM',
-        'GP': input_dir / 'GP'
+        'GP': input_dir / 'GP',
+        'HP': input_dir / 'HP'
     }
     
     # Load processed files record

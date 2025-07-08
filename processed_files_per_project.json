@@ -5,5 +5,24 @@
     "OVB Document Listing 230625.xlsx": "23-Jun-2025_09:38",
     "OVB Document Listing 010725.xlsx": "01-Jul-2025_09:18",
     "OVB Document Listing 080725.xlsx": "08-Jul-2025_07:02"
+  },
+  "NewMalden": {
+    "NM Document Listing 060625.xlsx": "06-Jun-2025_17:44",
+    "NM Document Listing 160625.xlsx": "16-Jun-2025_07:59",
+    "NM Document Listing 240625.xlsx": "24-Jun-2025_05:30",
+    "NM Document Listing 250625.xlsx": "25-Jun-2025_09:22",
+    "NM Document Listing 270625.xlsx": "27-Jun-2025_13:09",
+    "NM Document Listing 010725.xlsx": "01-Jul-2025_09:20",
+    "NM Document Listing 080725.xlsx": "08-Jul-2025_07:01"
+  },
+  "GreenwichPeninsula": {
+    "GP Asite Data 060625.xlsx": "06-Jun-2025_17:45",
+    "GP Asite Export 190625.xlsx": "19-Jun-2025_13:55",
+    "GP Document Listing 230625.xlsx": "23-Jun-2025_09:34",
+    "GP Document Listing 010725.xlsx": "01-Jul-2025_09:20",
+    "GP Document Listing 080725.xlsx": "08-Jul-2025_07:00"
+  },
+  "HollowayPark": {
+    "HP Document Listing 080725.csv": "08-Jul-2025_07:03"
   }
 }

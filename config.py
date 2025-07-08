@@ -19,26 +19,51 @@ for directory in [INPUT_DIR, DATA_DIR, REPORTS_DIR, CONFIGS_DIR]:
 PROJECT_CODES = {
     'H8499': 'NewMalden',
     'JXXXZ18': 'GreenwichPeninsula',
-    'R459': 'OvalBlockB'
+    'R459': 'OvalBlockB',
+    'HPA': 'HollowayPark'  # Holloway Park project code
 }
 
 def detect_project_from_file(file_path):
-    """Detect project from the Doc Ref in the Excel file."""
+    """Detect project from the Doc Ref in the Excel file or CSV file."""
     try:
-        # Read just the Doc Ref column (column C) from row 8
-        df = pd.read_excel(file_path, usecols="C", skiprows=7, nrows=1)
-        if df.empty:
-            return None
-            
-        doc_ref = df.iloc[0, 0]
-        if pd.isna(doc_ref):
-            return None
-            
-        # Extract project code (everything before first hyphen)
-        project_code = str(doc_ref).split('-')[0]
+        file_path_str = str(file_path).lower()
         
-        # Look up project name
-        return PROJECT_CODES.get(project_code)
+        # Check if it's a CSV file
+        if file_path_str.endswith('.csv'):
+            # For CSV files, read the Title column (which contains Doc Ref)
+            df = pd.read_csv(file_path, usecols=["Title"], nrows=10)
+            if df.empty:
+                return None
+            
+            # Look for a valid document reference in the first few rows
+            for _, row in df.iterrows():
+                title = row['Title']
+                if pd.notna(title) and '-' in str(title):
+                    # Extract project code (everything before first hyphen)
+                    project_code = str(title).split('-')[0]
+                    if project_code in PROJECT_CODES:
+                        return PROJECT_CODES.get(project_code)
+            
+            # If no valid project code found, check if it's Holloway Park by filename
+            if 'hp' in file_path_str or 'holloway' in file_path_str:
+                return 'HollowayPark'
+            
+            return None
+        else:
+            # Excel file - read just the Doc Ref column (column C) from row 8
+            df = pd.read_excel(file_path, usecols="C", skiprows=7, nrows=1)
+            if df.empty:
+                return None
+                
+            doc_ref = df.iloc[0, 0]
+            if pd.isna(doc_ref):
+                return None
+                
+            # Extract project code (everything before first hyphen)
+            project_code = str(doc_ref).split('-')[0]
+            
+            # Look up project name
+            return PROJECT_CODES.get(project_code)
     except Exception as e:
         print(f"Error detecting project from file: {str(e)}")
         return None
@@ -79,12 +104,15 @@ def load_project_config(project_name, input_file=None):
     
     # Load the module and return the relevant settings
     settings = {
-        'EXCEL_SETTINGS': module.EXCEL_SETTINGS,
-        'CHANGE_DETECTION': module.CHANGE_DETECTION,
-        'REPORT_SETTINGS': module.REPORT_SETTINGS,
-        'FILE_TYPE_SETTINGS': module.FILE_TYPE_SETTINGS if hasattr(module, 'FILE_TYPE_SETTINGS') else {},
-        'CERTIFICATE_SETTINGS': module.CERTIFICATE_SETTINGS if hasattr(module, 'CERTIFICATE_SETTINGS') else {},
-        'PROJECT_TITLE': getattr(module, 'PROJECT_TITLE', project_name)
+        'EXCEL_SETTINGS': module.EXCEL_SETTINGS if hasattr(module, 'EXCEL_SETTINGS') else DEFAULT_SETTINGS['EXCEL_SETTINGS'],
+        'CSV_SETTINGS': module.CSV_SETTINGS if hasattr(module, 'CSV_SETTINGS') else None,
+        'CHANGE_DETECTION': module.CHANGE_DETECTION if hasattr(module, 'CHANGE_DETECTION') else DEFAULT_SETTINGS['CHANGE_DETECTION'],
+        'REPORT_SETTINGS': module.REPORT_SETTINGS if hasattr(module, 'REPORT_SETTINGS') else DEFAULT_SETTINGS['REPORT_SETTINGS'],
+        'FILE_TYPE_SETTINGS': module.FILE_TYPE_SETTINGS if hasattr(module, 'FILE_TYPE_SETTINGS') else DEFAULT_SETTINGS['FILE_TYPE_SETTINGS'],
+        'CERTIFICATE_SETTINGS': module.CERTIFICATE_SETTINGS if hasattr(module, 'CERTIFICATE_SETTINGS') else DEFAULT_SETTINGS['CERTIFICATE_SETTINGS'],
+        'PROJECT_TITLE': getattr(module, 'PROJECT_TITLE', project_name),
+        'MBS_FILTER': module.MBS_FILTER if hasattr(module, 'MBS_FILTER') else None,
+        'COLUMN_MAPPINGS': module.COLUMN_MAPPINGS if hasattr(module, 'COLUMN_MAPPINGS') else None
     }
     return settings
 
