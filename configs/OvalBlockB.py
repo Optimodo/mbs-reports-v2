@@ -29,7 +29,7 @@ CHANGE_DETECTION = {
         "Doc Title",
         "Rev",
         "Date (WET)",
-        "Last Status Change (WET)"
+        "Last Status Change (WET)",
         "Last Updated (WET)",
     ],
     "ignore_columns": [

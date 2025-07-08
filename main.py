@@ -16,6 +16,10 @@ from openpyxl.chart.label import DataLabelList
 from openpyxl.chart.series import DataPoint
 from openpyxl.drawing.fill import ColorChoice, PatternFillProperties
 from openpyxl.drawing.colors import SchemeColor
+import warnings
+
+# Suppress openpyxl default style warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 # Overall Summary Sheet Style Configuration
 OVERALL_SUMMARY_STYLES = {
@@ -551,68 +555,30 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
             # Try to load existing file
             try:
                 book = load_workbook(output_file)
-                
                 # Remove existing Overall Summary sheet if it exists (pandas won't replace it)
                 if 'Overall Summary' in book.sheetnames:
                     book.remove(book['Overall Summary'])
                     book.save(output_file)  # Save the removal
-                
-                # Remove existing Changes sheet if it exists
-                if 'Changes' in book.sheetnames:
-                    book.remove(book['Changes'])
-                
-                # Read existing summary data if it exists
-                existing_summary = None
+                # Remove existing Summary Data sheet if it exists
                 if 'Summary Data' in book.sheetnames:
-                    existing_summary = pd.read_excel(output_file, sheet_name='Summary Data')
-                    # Remove the sheet as we'll recreate it with appended data
                     book.remove(book['Summary Data'])
-                
+                # Remove existing Latest Data sheet if it exists
+                if 'Latest Data' in book.sheetnames:
+                    book.remove(book['Latest Data'])
                 with pd.ExcelWriter(output_file, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                    # Append new changes to changes sheet
-                    changes_df.to_excel(writer, sheet_name='Changes', index=False)
-                    
-                    # If we have existing summary data, append new data to it
-                    if existing_summary is not None:
-                        combined_summary = pd.concat([existing_summary, summary_df], ignore_index=True)
-                        combined_summary.to_excel(writer, sheet_name='Summary Data', index=False)
-                    else:
-                        summary_df.to_excel(writer, sheet_name='Summary Data', index=False)
-                    
-                    # Update latest data sheet
+                    summary_df.to_excel(writer, sheet_name='Summary Data', index=False)
                     latest_data_df.to_excel(writer, sheet_name='Latest Data', index=False)
             except FileNotFoundError:
                 # If file doesn't exist, create new one
                 with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-                    changes_df.to_excel(writer, sheet_name='Changes', index=False)
                     summary_df.to_excel(writer, sheet_name='Summary Data', index=False)
                     latest_data_df.to_excel(writer, sheet_name='Latest Data', index=False)
-            
-            # Add highlighting to changes
-            book = load_workbook(output_file)
-            changes_sheet = book['Changes']
-            yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
-            
-            # Highlight cells where data has changed
-            for row in changes_sheet.iter_rows(min_row=2):  # Skip header
-                change_details = row[-1].value  # Last column is Change Details
-                if change_details and '→' in str(change_details):
-                    # Split the change details to get the column names that changed
-                    changes = str(change_details).split('; ')
-                    for change in changes:
-                        if '→' in change:
-                            col_name = change.split(':')[0].strip()
-                            # Find the column index for this column name
-                            for idx, cell in enumerate(changes_sheet[1]):  # Header row
-                                if cell.value == col_name:
-                                    # Highlight the changed cell
-                                    row[idx].fill = yellow_fill
-            
             # Create or update Overall Summary sheet first
+            book = load_workbook(output_file)
             if 'Overall Summary' in book.sheetnames:
                 book.remove(book['Overall Summary'])
             overall_summary = book.create_sheet('Overall Summary', 0)  # Create at index 0 (first position)
-
+            
             # Set print layout: fit to 1 page, center, narrow margins
             overall_summary.page_setup.fitToWidth = 1
             overall_summary.page_setup.fitToHeight = 0
@@ -1327,16 +1293,111 @@ def generate_standalone_report(input_file, output_file, config):
 def slugify(text):
     return re.sub(r'[^A-Za-z0-9]+', '_', text).strip('_')
 
+def detect_new_revision_types(sheet, new_revisions, revision_type):
+    """Detect if there are new revision types that don't exist in the current progression report"""
+    if not sheet or not new_revisions:
+        return []
+    
+    # Get existing revision labels from column A
+    existing_revisions = set()
+    section_start_row = None
+    section_end_row = None
+    
+    # Find the section for this revision type
+    section_title = f'{revision_type} Revision Progression'
+    section_found = False
+    
+    for row in range(1, sheet.max_row + 1):
+        cell_value = sheet[f'A{row}'].value
+        if cell_value == section_title:
+            section_found = True
+            section_start_row = row + 2  # Skip header and column header rows
+            continue
+        
+        # If we've found the section, collect revision labels until we hit the next section or total
+        if section_found and cell_value:
+            if 'Total' in str(cell_value) or 'Progression' in str(cell_value):
+                section_end_row = row - 1
+                break
+            # Extract revision name from the label (remove any prefix)
+            revision_name = str(cell_value).replace('Rev_', '').replace('Status_', '')
+            if revision_name and not revision_name.startswith('P Revisions') and not revision_name.startswith('C Revisions'):
+                existing_revisions.add(revision_name)
+    
+    # Compare with new revisions
+    new_revision_names = {rev.replace('Rev_', '') for rev in new_revisions}
+    missing_revisions = new_revision_names - existing_revisions
+    
+    return sorted(list(missing_revisions))
+
+def fill_empty_cells_with_zeros_in_file(progression_report_path):
+    """Open the progression report, fill empty cells in tables with zeros, and save."""
+    from openpyxl import load_workbook
+    print(f"Filling empty cells in {progression_report_path}...")
+    wb = load_workbook(progression_report_path)
+    if 'Progression Report' not in wb.sheetnames:
+        print("No 'Progression Report' sheet found.")
+        return
+    sheet = wb['Progression Report']
+    
+    # Find all date headers and their column numbers
+    date_columns = set()
+    for row_num in range(1, sheet.max_row + 1):
+        for col_num in range(2, sheet.max_column + 1):
+            col_letter = chr(ord('A') + col_num - 1)
+            date_cell = sheet[f'{col_letter}{row_num}']
+            if date_cell.value and '-' in str(date_cell.value) and len(str(date_cell.value)) > 5:
+                date_columns.add(col_num)
+    
+    print(f"  Found date columns: {sorted(date_columns)}")
+    
+    # Find all table sections
+    date_headers = []
+    for row_num in range(1, sheet.max_row + 1):
+        for col_num in range(2, sheet.max_column + 1):
+            col_letter = chr(ord('A') + col_num - 1)
+            date_cell = sheet[f'{col_letter}{row_num}']
+            if date_cell.value and '-' in str(date_cell.value) and len(str(date_cell.value)) > 5:
+                # This looks like a date header, find the next total row
+                for next_row in range(row_num + 1, sheet.max_row + 1):
+                    next_cell = sheet[f'A{next_row}']
+                    if next_cell.value and 'Total' in str(next_cell.value):
+                        date_headers.append((row_num, next_row))
+                        break
+                break
+    
+    # For each table section, fill empty cells with zeros only in date columns
+    total_cells_filled = 0
+    for start_row, end_row in date_headers:
+        for row in range(start_row + 1, end_row):  # Skip the date header row
+            for col_num in date_columns:  # Only process columns with date headers
+                col_letter = chr(ord('A') + col_num - 1)
+                cell = sheet[f'{col_letter}{row}']
+                if cell.value is None or cell.value == '':
+                    sheet[f'{col_letter}{row}'] = 0
+                    # Apply consistent formatting with other data cells
+                    sheet[f'{col_letter}{row}'].font = Font(name='Calibri', size=11)
+                    sheet[f'{col_letter}{row}'].alignment = Alignment(horizontal='center', vertical='center')
+                    total_cells_filled += 1
+    
+    wb.save(progression_report_path)
+    print(f"Filled {total_cells_filled} empty cells in {progression_report_path}.")
+
 def generate_progression_report(summary_df, output_file, config, latest_data_df=None):
     """Generate a report showing the progression of revisions and statuses over time"""
     try:
+        print(f"Debug: Starting progression report generation for {output_file}")
+        print(f"Debug: summary_df has {len(summary_df)} rows")
+        
         # Create a new workbook or load existing
         if os.path.exists(output_file):
             wb = load_workbook(output_file)
+            print(f"Debug: Loaded existing progression report")
         else:
             wb = Workbook()
             # Remove the default 'Sheet' worksheet
             wb.remove(wb['Sheet'])
+            print(f"Debug: Created new progression report")
         
         # Get or create the Progression Report sheet
         if 'Progression Report' in wb.sheetnames:
@@ -1347,9 +1408,11 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 if any(cell.value for cell in col):
                     last_col = max(last_col, col[0].column)
             next_col = last_col + 1
+            print(f"Debug: Existing sheet found, next column will be {next_col}")
         else:
             sheet = wb.create_sheet('Progression Report')
             next_col = 2  # Start with column B (A is for labels)
+            print(f"Debug: Created new sheet, starting with column {next_col}")
         
         # Set up the sheet if it's new
         if next_col == 2:
@@ -1376,6 +1439,21 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
         c_revs = sorted([col for col in rev_columns if col.startswith('Rev_C')],
                        key=lambda x: int(x.split('_')[1][1:]) if x.split('_')[1][1:].isdigit() else float('inf'))
         other_revs = sorted([col for col in rev_columns if not (col.startswith('Rev_P') or col.startswith('Rev_C'))])
+        
+        # Detect new revision types if this is an existing report
+        if next_col > 2:  # Existing report
+            new_p_revs = detect_new_revision_types(sheet, p_revs, 'P')
+            new_c_revs = detect_new_revision_types(sheet, c_revs, 'C')
+            
+            if new_p_revs:
+                print(f"WARNING: New P revision types detected: {', '.join(new_p_revs)}")
+                print("These revisions will not be properly aligned in the progression report.")
+                print("Consider regenerating the progression report to include proper row structure.")
+            
+            if new_c_revs:
+                print(f"WARNING: New C revision types detected: {', '.join(new_c_revs)}")
+                print("These revisions will not be properly aligned in the progression report.")
+                print("Consider regenerating the progression report to include proper row structure.")
         
         # Function to get status count for a specific status group (all documents)
         def get_status_count(status_group):
@@ -1444,6 +1522,67 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
         # Start row for data
         current_row = 3
         
+        # Track total row positions for each section
+        total_row_positions = {
+            'P Revisions Total': None,
+            'P Status Total': None,
+            'C Revisions Total': None,
+            'C Status Total': None
+        }
+        
+        # Function to fill empty cells with zeros in table sections
+        def fill_empty_cells_with_zeros():
+            """Fill any empty cells in table sections with zeros"""
+            print("  Debug: Starting fill_empty_cells_with_zeros function")
+            
+            # Find all date headers (column headers) to identify table sections
+            date_headers = []
+            for row_num in range(1, sheet.max_row + 1):
+                cell = sheet[f'A{row_num}']
+                # Look for date headers - they should be in columns B onwards and contain date-like patterns
+                for col_num in range(2, sheet.max_column + 1):
+                    col_letter = chr(ord('A') + col_num - 1)
+                    date_cell = sheet[f'{col_letter}{row_num}']
+                    if date_cell.value and '-' in str(date_cell.value) and len(str(date_cell.value)) > 5:
+                        # This looks like a date header, find the next total row
+                        for next_row in range(row_num + 1, sheet.max_row + 1):
+                            next_cell = sheet[f'A{next_row}']
+                            if next_cell.value and 'Total' in str(next_cell.value):
+                                date_headers.append((row_num, next_row))
+                                print(f"  Debug: Found table section from row {row_num} to {next_row}")
+                                break
+                        break
+            
+            print(f"  Debug: Found {len(date_headers)} table sections")
+            
+            # For each table section, fill empty cells with zeros
+            for start_row, end_row in date_headers:
+                # Get the column range (from B to the last column with data)
+                # Always include the current column being added (next_col)
+                max_col = next_col - 1  # The current column being added
+                # Also check existing columns for any that might have data
+                for col in sheet.columns:
+                    if any(cell.value for cell in col):
+                        max_col = max(max_col, col[0].column)
+                
+                print(f"  Debug: Processing section rows {start_row + 1} to {end_row}, columns B to {chr(ord('A') + max_col - 1)}")
+                
+                # Fill empty cells in this section
+                cells_filled = 0
+                for row in range(start_row + 1, end_row):  # Skip the date header row
+                    for col_num in range(2, max_col + 1):  # Start from column B
+                        col_letter = chr(ord('A') + col_num - 1)
+                        cell = sheet[f'{col_letter}{row}']
+                        if cell.value is None or cell.value == '':
+                            sheet[f'{col_letter}{row}'] = 0
+                            sheet[f'{col_letter}{row}'].font = Font(name='Calibri', size=11)
+                            sheet[f'{col_letter}{row}'].alignment = Alignment(horizontal='center', vertical='center')
+                            cells_filled += 1
+                
+                print(f"  Debug: Filled {cells_filled} empty cells in this section")
+            
+            print("  Debug: Completed fill_empty_cells_with_zeros function")
+        
         # Function to add a section header
         def add_section_header(title, row):
             if next_col == 2:  # Only add headers for new sheets
@@ -1451,6 +1590,31 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 sheet[f'A{row}'] = title
                 sheet[f'A{row}'].font = Font(name='Calibri', size=12, bold=True)
                 sheet[f'A{row}'].fill = PatternFill(start_color='F0F0F0', end_color='F0F0F0', fill_type='solid')
+            else:
+                # For existing sheets, find the section header by name
+                section_row_found = None
+                for row_num in range(1, sheet.max_row + 1):
+                    # Check if this cell is part of a merged range
+                    cell = sheet[f'A{row_num}']
+                    if hasattr(cell, 'coordinate') and cell.coordinate in sheet.merged_cells:
+                        # For merged cells, get the value from the top-left cell of the merged range
+                        for merged_range in sheet.merged_cells.ranges:
+                            if cell.coordinate in merged_range:
+                                # Get the top-left cell of the merged range
+                                top_left_cell = sheet[f'A{merged_range.min_row}']
+                                cell_value = top_left_cell.value
+                                break
+                    else:
+                        cell_value = cell.value
+                    
+                    if cell_value and title in str(cell_value):
+                        section_row_found = row_num
+                        break
+                
+                if section_row_found:
+                    # Use the found row position
+                    row = section_row_found
+            
             return row + 1
         
         # Function to add column headers
@@ -1463,26 +1627,206 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
             sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
             return row + 1
         
-        # Function to add data rows
+        # Function to add data rows with proper row matching
         def add_data_rows(columns, start_row, title_prefix=''):
             row = start_row
             latest_data = summary_df.iloc[-1]  # Get the latest data
+            rows_inserted = 0  # Track how many rows we've inserted
             
-            for col in columns:
-                # Add row header if it's a new sheet
-                if next_col == 2:
+            if next_col == 2:
+                # New sheet - create row headers and add data
+                for col in columns:
+                    # Add row header
                     sheet[f'A{row}'] = f"{title_prefix}{col.replace('Rev_', '').replace('Status_', '')}"
                     sheet[f'A{row}'].font = Font(name='Calibri', size=11)
                     sheet[f'A{row}'].alignment = Alignment(horizontal='left', vertical='center')
+                    
+                    # Add data for the new column
+                    date_col = chr(ord('A') + next_col - 1)
+                    value = latest_data.get(col, 0)
+                    sheet[f'{date_col}{row}'] = value
+                    sheet[f'{date_col}{row}'].font = Font(name='Calibri', size=11)
+                    sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center')
+                    
+                    row += 1
+            else:
+                # Existing sheet - match data to existing row headers
+                # First, read existing row headers from column A
+                existing_headers = []
+                current_row_num = start_row
                 
-                # Add data for the new column
-                date_col = chr(ord('A') + next_col - 1)
-                value = latest_data.get(col, 0)
-                sheet[f'{date_col}{row}'] = value
-                sheet[f'{date_col}{row}'].font = Font(name='Calibri', size=11)
-                sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center')
+                # Read headers until we hit a total row or next section
+                while current_row_num <= sheet.max_row:
+                    cell_value = sheet[f'A{current_row_num}'].value
+                    if not cell_value or 'Total' in str(cell_value) or 'Progression' in str(cell_value):
+                        break
+                    existing_headers.append((current_row_num, str(cell_value)))
+                    current_row_num += 1
                 
-                row += 1
+                # Create a mapping of revision names to their data values
+                revision_data = {}
+                for col in columns:
+                    revision_name = col.replace('Rev_', '').replace('Status_', '')
+                    revision_data[revision_name] = latest_data.get(col, 0)
+                
+                # Add data to existing rows and track which revisions we've handled
+                handled_revisions = set()
+                for header_row, header_text in existing_headers:
+                    # Extract revision name from header (remove any prefix)
+                    header_revision = header_text.replace('Rev_', '').replace('Status_', '')
+                    
+                    # Find matching revision data
+                    if header_revision in revision_data:
+                        # Add data to this row
+                        date_col = chr(ord('A') + next_col - 1)
+                        value = revision_data[header_revision]
+                        
+                        # Check if the cell is a merged cell before trying to edit it
+                        cell = sheet[f'{date_col}{header_row}']
+                        if not hasattr(cell, 'coordinate') or not cell.coordinate in sheet.merged_cells:
+                            sheet[f'{date_col}{header_row}'] = value
+                            sheet[f'{date_col}{header_row}'].font = Font(name='Calibri', size=11)
+                            sheet[f'{date_col}{header_row}'].alignment = Alignment(horizontal='center', vertical='center')
+                        else:
+                            print(f"  Warning: Skipping merged cell at {date_col}{header_row}")
+                        
+                        handled_revisions.add(header_revision)
+                    else:
+                        # This row doesn't have data for this revision - add 0
+                        date_col = chr(ord('A') + next_col - 1)
+                        
+                        # Check if the cell is a merged cell before trying to edit it
+                        cell = sheet[f'{date_col}{header_row}']
+                        if not hasattr(cell, 'coordinate') or not cell.coordinate in sheet.merged_cells:
+                            sheet[f'{date_col}{header_row}'] = 0
+                            sheet[f'{date_col}{header_row}'].font = Font(name='Calibri', size=11)
+                            sheet[f'{date_col}{header_row}'].alignment = Alignment(horizontal='center', vertical='center')
+                        else:
+                            print(f"  Warning: Skipping merged cell at {date_col}{header_row}")
+                
+                # Find revisions that weren't handled (new revisions)
+                new_revisions = set(revision_data.keys()) - handled_revisions
+                
+                if new_revisions:
+                    print(f"INFO: Adding {len(new_revisions)} new revision(s) to existing progression report")
+                    
+                    # Sort new revisions properly (P01, P02, P10, P11, etc.)
+                    def sort_revision_key(rev):
+                        if rev.startswith('P') or rev.startswith('C'):
+                            # Extract the number part
+                            prefix = rev[0]  # P or C
+                            number_part = rev[1:]
+                            
+                            # Handle special cases like P_Certificates
+                            if '_' in number_part:
+                                # For special cases like P_Certificates, put them at the end
+                                return (prefix, float('inf'))
+                            
+                            try:
+                                # Convert to int for proper numeric sorting
+                                return (prefix, int(number_part))
+                            except ValueError:
+                                # If it's not a number, sort as string but after numeric ones
+                                return (prefix, float('inf'))
+                        else:
+                            # For other revisions, sort as string
+                            return ('Z', rev)  # Put at end
+                    
+                    sorted_new_revisions = sorted(new_revisions, key=sort_revision_key)
+                    
+                    # For each new revision, insert it at the appropriate position
+                    for new_rev in sorted_new_revisions:
+                        # Find the correct insertion position based on sorting
+                        insert_position = None
+                        
+                        # Get all existing revisions in this section for comparison
+                        section_revisions = []
+                        for header_row, header_text in existing_headers:
+                            if 'Total' not in header_text:
+                                rev_name = header_text.replace('Rev_', '').replace('Status_', '')
+                                section_revisions.append((header_row, rev_name))
+                        
+                        # Sort existing revisions
+                        section_revisions.sort(key=lambda x: sort_revision_key(x[1]))
+                        
+                        # Find where to insert the new revision
+                        for i, (header_row, rev_name) in enumerate(section_revisions):
+                            if sort_revision_key(new_rev) < sort_revision_key(rev_name):
+                                insert_position = header_row
+                                break
+                        
+                        # If no position found, insert at the end (before total)
+                        if insert_position is None:
+                            if section_revisions:
+                                insert_position = max(row for row, _ in section_revisions) + 1
+                            else:
+                                insert_position = start_row
+                        
+                        # Insert new row at the correct position
+                        sheet.insert_rows(insert_position)
+                        rows_inserted += 1  # Track the insertion
+                        
+                        # Update merged cells that are affected by the row insertion
+                        # Get all merged ranges and update those that start at or after the insertion point
+                        merged_ranges_to_update = []
+                        for merged_range in list(sheet.merged_cells.ranges):
+                            start_row = merged_range.min_row
+                            end_row = merged_range.max_row
+                            
+                            # If the merged range starts at or after the insertion point, it needs to be updated
+                            if start_row >= insert_position:
+                                # Unmerge the current range
+                                sheet.unmerge_cells(str(merged_range))
+                                # Store the new range coordinates
+                                new_start_row = start_row + 1
+                                new_end_row = end_row + 1
+                                merged_ranges_to_update.append((merged_range, new_start_row, new_end_row))
+                        
+                        # Re-merge the updated ranges
+                        for old_range, new_start_row, new_end_row in merged_ranges_to_update:
+                            # Create new range string
+                            start_col = old_range.min_col
+                            end_col = old_range.max_col
+                            new_range = f"{chr(ord('A') + start_col - 1)}{new_start_row}:{chr(ord('A') + end_col - 1)}{new_end_row}"
+                            sheet.merge_cells(new_range)
+                        
+                        # Update all row numbers in existing_headers that are >= insert_position
+                        updated_headers = []
+                        for header_row, header_text in existing_headers:
+                            if header_row >= insert_position:
+                                updated_headers.append((header_row + 1, header_text))
+                            else:
+                                updated_headers.append((header_row, header_text))
+                        existing_headers = updated_headers
+                        
+                        # Update total row positions that are >= insert_position
+                        for total_label, total_row in total_row_positions.items():
+                            if total_row is not None and total_row >= insert_position:
+                                total_row_positions[total_label] = total_row + 1
+                        
+                        # Add the new revision header
+                        sheet[f'A{insert_position}'] = f"{title_prefix}{new_rev}"
+                        sheet[f'A{insert_position}'].font = Font(name='Calibri', size=11)
+                        sheet[f'A{insert_position}'].alignment = Alignment(horizontal='left', vertical='center')
+                        
+                        # Add the data
+                        date_col = chr(ord('A') + next_col - 1)
+                        value = revision_data[new_rev]
+                        sheet[f'{date_col}{insert_position}'] = value
+                        sheet[f'{date_col}{insert_position}'].font = Font(name='Calibri', size=11)
+                        sheet[f'{date_col}{insert_position}'].alignment = Alignment(horizontal='center', vertical='center')
+                        
+                        # Update existing_headers to include the new row
+                        existing_headers.append((insert_position, f"{title_prefix}{new_rev}"))
+                        
+                        print(f"  Added new revision: {new_rev} at row {insert_position}")
+                
+                # Return the row after the last handled row, adjusted for inserted rows
+                if existing_headers:
+                    row = max(header_row for header_row, _ in existing_headers) + 1
+                else:
+                    row = start_row
+            
             return row
         
         # Function to add status data rows with revision filtering
@@ -1507,22 +1851,21 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 
                 row += 1
             
-            # Add "Other Status" row for uncategorized statuses
+            # Always add "Other Status" row to maintain consistent structure
+            # Add row header if it's a new sheet
+            if next_col == 2:
+                sheet[f'A{row}'] = 'Other Status'
+                sheet[f'A{row}'].font = Font(name='Calibri', size=11)
+                sheet[f'A{row}'].alignment = Alignment(horizontal='left', vertical='center')
+            
+            # Add filtered data for the new column (always add, even if 0)
+            date_col = chr(ord('A') + next_col - 1)
             other_count = get_other_status_count(revision_type)
-            if other_count > 0:
-                # Add row header if it's a new sheet
-                if next_col == 2:
-                    sheet[f'A{row}'] = 'Other Status'
-                    sheet[f'A{row}'].font = Font(name='Calibri', size=11)
-                    sheet[f'A{row}'].alignment = Alignment(horizontal='left', vertical='center')
-                
-                # Add filtered data for the new column
-                date_col = chr(ord('A') + next_col - 1)
-                sheet[f'{date_col}{row}'] = other_count
-                sheet[f'{date_col}{row}'].font = Font(name='Calibri', size=11)
-                sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center')
-                
-                row += 1
+            sheet[f'{date_col}{row}'] = other_count
+            sheet[f'{date_col}{row}'].font = Font(name='Calibri', size=11)
+            sheet[f'{date_col}{row}'].alignment = Alignment(horizontal='center', vertical='center')
+            
+            row += 1
             
             return row
         
@@ -1531,26 +1874,91 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
             total = 0
             latest_data = summary_df.iloc[-1]
             for col in columns:
-                total += latest_data.get(col, 0)
+                value = latest_data.get(col, 0)
+                # Handle nan values - treat them as 0
+                if pd.isna(value):
+                    value = 0
+                total += value
             return total
         
         # Function to add a total row
         def add_total_row(start_row, total_value, label='Total'):
-            # Add row header if it's a new sheet
-            if next_col == 2:
-                sheet[f'A{start_row}'] = label
-                sheet[f'A{start_row}'].font = Font(name='Calibri', size=11, bold=True)
-                sheet[f'A{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
-                sheet[f'A{start_row}'].fill = PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
+            # Use tracked position if available, otherwise find by name
+            if next_col > 2:
+                # Check if we have a tracked position for this total row
+                if label in total_row_positions and total_row_positions[label] is not None:
+                    actual_row = total_row_positions[label]
+                else:
+                    # Fallback: Search for the total row by name in column A
+                    total_row_found = None
+                    for row_num in range(1, sheet.max_row + 1):
+                        # Check if this cell is part of a merged range
+                        cell = sheet[f'A{row_num}']
+                        if hasattr(cell, 'coordinate') and cell.coordinate in sheet.merged_cells:
+                            # For merged cells, get the value from the top-left cell of the merged range
+                            for merged_range in sheet.merged_cells.ranges:
+                                if cell.coordinate in merged_range:
+                                    # Get the top-left cell of the merged range
+                                    top_left_cell = sheet[f'A{merged_range.min_row}']
+                                    cell_value = top_left_cell.value
+                                    break
+                        else:
+                            cell_value = cell.value
+                        
+                        if cell_value and label in str(cell_value):
+                            total_row_found = row_num
+                            break
+                    
+                    if total_row_found:
+                        # Use the found row position and store it for future use
+                        actual_row = total_row_found
+                        total_row_positions[label] = actual_row
+                    else:
+                        # If not found, use the provided start_row
+                        actual_row = start_row
+                        total_row_positions[label] = actual_row
+            else:
+                # New sheet - add row header
+                actual_row = start_row
+                sheet[f'A{actual_row}'] = label
+                sheet[f'A{actual_row}'].font = Font(name='Calibri', size=11, bold=True)
+                sheet[f'A{actual_row}'].alignment = Alignment(horizontal='left', vertical='center')
+                sheet[f'A{actual_row}'].fill = PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
+                # Store the position for future use
+                total_row_positions[label] = actual_row
             
             # Add total data for the new column
             date_col = chr(ord('A') + next_col - 1)
-            sheet[f'{date_col}{start_row}'] = total_value
-            sheet[f'{date_col}{start_row}'].font = Font(name='Calibri', size=11, bold=True)
-            sheet[f'{date_col}{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
-            sheet[f'{date_col}{start_row}'].fill = PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
             
-            return start_row + 1
+            # Check if the cell is a merged cell before trying to edit it
+            cell = sheet[f'{date_col}{actual_row}']
+            if not hasattr(cell, 'coordinate') or not cell.coordinate in sheet.merged_cells:
+                sheet[f'{date_col}{actual_row}'] = total_value
+                sheet[f'{date_col}{actual_row}'].font = Font(name='Calibri', size=11, bold=True)
+                sheet[f'{date_col}{actual_row}'].alignment = Alignment(horizontal='center', vertical='center')
+                sheet[f'{date_col}{actual_row}'].fill = PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
+                print(f"  Added total {total_value} to {date_col}{actual_row} for {label}")
+            else:
+                print(f"  Warning: Skipping merged cell at {date_col}{actual_row} for total row {label}")
+                # Try to find the correct cell in the merged range
+                for merged_range in sheet.merged_cells.ranges:
+                    if cell.coordinate in merged_range:
+                        # Find the correct column within the merged range
+                        if merged_range.min_col <= ord(date_col) - ord('A') + 1 <= merged_range.max_col:
+                            # This column is within the merged range, try to write to the top-left cell
+                            top_left_cell = sheet[f'{date_col}{merged_range.min_row}']
+                            if not hasattr(top_left_cell, 'coordinate') or not top_left_cell.coordinate in sheet.merged_cells:
+                                sheet[f'{date_col}{merged_range.min_row}'] = total_value
+                                sheet[f'{date_col}{merged_range.min_row}'].font = Font(name='Calibri', size=11, bold=True)
+                                sheet[f'{date_col}{merged_range.min_row}'].alignment = Alignment(horizontal='center', vertical='center')
+                                sheet[f'{date_col}{merged_range.min_row}'].fill = PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
+                                print(f"  Added total {total_value} to {date_col}{merged_range.min_row} (merged range) for {label}")
+                                break
+                        else:
+                            print(f"  Column {date_col} is not within merged range {merged_range}")
+                        break
+            
+            return actual_row + 1
         
         # Add P Revision section
         current_row = add_section_header('P Revision Progression', current_row)
@@ -1587,6 +1995,9 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
         c_status_total = sum(get_filtered_status_count(status_group, 'C') for status_group in PROGRESSION_STATUS_ORDER) + get_other_status_count('C')
         current_row = add_total_row(current_row, c_status_total, 'C Status Total')
         
+        # Note: fill_empty_cells_with_zeros is now called once at the end of all processing
+        # to avoid running it multiple times per file
+
         # Auto-adjust column widths
         for column in sheet.columns:
             max_length = 0
@@ -1617,67 +2028,24 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
         print(f"Error generating progression report: {str(e)}")
         return False
 
-def main():
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Document Register Report Generator')
-    parser.add_argument('--standalone', action='store_true', help='Generate a standalone report')
-    parser.add_argument('--input', type=str, help='Input file for standalone report')
-    parser.add_argument('--output', type=str, help='Output file path')
-    parser.add_argument('--debug', action='store_true', help='Enable debug output')
-    parser.add_argument('--project', type=str, help='Project name (e.g., GreenwichPeninsula, NewMalden, OvalBlockB)')
-    args = parser.parse_args()
+def load_processed_files_per_project():
+    """Load the record of processed files per project"""
+    try:
+        with open('processed_files_per_project.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_processed_files_per_project(processed_files):
+    """Save the record of processed files per project"""
+    with open('processed_files_per_project.json', 'w') as f:
+        json.dump(processed_files, f, indent=2, default=str)
+
+def get_project_files_with_timestamps(project_input_dir):
+    """Get all Excel files in a project directory with their timestamps, sorted by date"""
+    files_with_timestamps = []
     
-    # Setup directories
-    input_dir = Path('input')
-    output_dir = Path('output')
-    output_dir.mkdir(exist_ok=True)
-    
-    if args.standalone:
-        if not args.input:
-            print("Error: --input argument is required for standalone reports")
-            return
-            
-        input_file = Path(args.input)
-        if not input_file.exists():
-            print(f"Error: Input file {input_file} does not exist")
-            return
-            
-        # Load project configuration based on input file
-        config = load_project_config(args.project, input_file)
-        
-        if args.output:
-            output_file = Path(args.output)
-        else:
-            project_slug = slugify(config.get('PROJECT_TITLE', 'standalone_report'))
-            output_file = output_dir / f"{project_slug}_standalone_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        generate_standalone_report(input_file, output_file, config)
-        return
-    
-    # Regular weekly report mode
-    # Load processed files record
-    processed_files = load_processed_files()
-    
-    # Dictionary to store all counts
-    all_counts = {}
-    all_changes = []
-    
-    # Get the previous latest data
-    previous_latest_data = None
-    output_file = output_dir / 'summary.xlsx'
-    if output_file.exists():
-        try:
-            previous_latest_data = pd.read_excel(output_file, sheet_name='Latest Data')
-            # Convert all columns to string
-            for col in previous_latest_data.columns:
-                previous_latest_data[col] = previous_latest_data[col].astype(str)
-        except Exception as e:
-            print(f"Warning: Could not load previous latest data: {str(e)}")
-    
-    # Find the most recent file based on timestamps
-    latest_file = None
-    latest_timestamp = None
-    
-    for file_path in input_dir.glob("*.xlsx"):
+    for file_path in project_input_dir.glob("*.xlsx"):
         if file_path.name.startswith('~$'):  # Skip temporary files
             continue
             
@@ -1691,190 +2059,549 @@ def main():
         try:
             date = datetime.strptime(date_str, '%d-%b-%Y')
             time = datetime.strptime(time_str, '%H:%M').time()
-            if latest_timestamp is None or (date, time) > latest_timestamp:
-                latest_timestamp = (date, time)
-                latest_file = file_path
+            files_with_timestamps.append((file_path, date, time, date_str, time_str))
         except ValueError as e:
             print(f"Warning: Could not parse date/time from {file_path.name}: {str(e)}")
             continue
     
-    if latest_file is None:
-        print("No valid files found to process")
-        return
+    # Sort by date and time (oldest first)
+    files_with_timestamps.sort(key=lambda x: (x[1], x[2]))
+    return files_with_timestamps
+
+def detect_project_files():
+    """Detect all files in project folders and update the JSON tracking file"""
+    print("Detecting files in project folders...")
     
-    print(f"\nProcessing latest file: {latest_file.name}")
+    # Setup directories
+    input_dir = Path('input')
     
-    # Load project configuration based on the latest file
-    config = load_project_config(args.project, latest_file)
+    # Define project folders with consistent naming
+    project_folders = {
+        'OVB': input_dir / 'OVB',
+        'NM': input_dir / 'NM', 
+        'GP': input_dir / 'GP'
+    }
     
-    # Read the latest file
-    try:
-        if args.debug:
-            print(f"Reading Excel file: {latest_file}")
-            print("Excel settings:", config['EXCEL_SETTINGS'])
+    # Load existing processed files record
+    processed_files = load_processed_files_per_project()
+    
+    # Handle legacy "NewMalden" entry by merging with "NM"
+    if "NewMalden" in processed_files and "NM" not in processed_files:
+        processed_files["NM"] = processed_files.pop("NewMalden")
+    elif "NewMalden" in processed_files and "NM" in processed_files:
+        # Merge the two entries
+        processed_files["NM"].update(processed_files.pop("NewMalden"))
+    
+    # Process each project folder
+    for project_code, project_input_dir in project_folders.items():
+        if not project_input_dir.exists():
+            print(f"Project folder {project_input_dir} does not exist, skipping...")
+            continue
         
-        current_df = pd.read_excel(latest_file, **config['EXCEL_SETTINGS'])
+        print(f"\nProcessing project: {project_code}")
+        print(f"Folder: {project_input_dir}")
         
-        if args.debug:
-            print("\nDataFrame info:")
-            print(current_df.info())
-            print("\nDataFrame columns:", current_df.columns.tolist())
-            print("\nFirst few rows:")
-            print(current_df.head())
+        # Get all files with timestamps for this project
+        files_with_timestamps = get_project_files_with_timestamps(project_input_dir)
         
-        # Convert all columns to string
-        for col in current_df.columns:
-            try:
-                current_df[col] = current_df[col].astype(str)
-            except Exception as e:
-                print(f"Warning: Error converting column '{col}' to string: {str(e)}")
-                if args.debug:
-                    print(f"Column '{col}' unique values:", current_df[col].unique())
+        if not files_with_timestamps:
+            print(f"No valid files found in {project_input_dir}")
+            continue
         
-        # Compare with previous latest data if it exists
-        if previous_latest_data is not None:
-            # Create a dictionary of previous data using composite key (Doc Ref + Doc Path)
-            prev_data_dict = {}
-            for _, row in previous_latest_data.iterrows():
-                key = (row['Doc Ref'], row['Doc Path'])
-                prev_data_dict[key] = row
+        print(f"Found {len(files_with_timestamps)} files:")
+        
+        # Initialize project in processed files if not exists
+        if project_code not in processed_files:
+            processed_files[project_code] = {}
+        
+        # Check each file and add to processed files (simulating processing)
+        for file_path, date, time, date_str, time_str in files_with_timestamps:
+            file_key = f"{date_str}_{time_str}"
             
-            # Check for duplicate Doc Refs in current data
-            doc_ref_counts = current_df['Doc Ref'].value_counts()
-            duplicate_doc_refs = doc_ref_counts[doc_ref_counts > 1].index.tolist()
-            
-            if duplicate_doc_refs:
-                print("\nWarning: Found duplicate Doc Refs in current data:")
-                for doc_ref in duplicate_doc_refs:
-                    print(f"Doc Ref: {doc_ref}")
-                    print("Locations:")
-                    for _, row in current_df[current_df['Doc Ref'] == doc_ref].iterrows():
-                        print(f"  - {row['Doc Path']} (Title: {row['Doc Title']})")
-            
-            # Compare each row in current data
-            for _, current_row in current_df.iterrows():
-                try:
-                    doc_ref = current_row['Doc Ref']
-                    doc_path = current_row['Doc Path']
-                    doc_title = current_row['Doc Title']
-                    key = (doc_ref, doc_path)
-                    
-                    if key in prev_data_dict:
-                        # Document exists in both - check for changes
-                        prev_row = prev_data_dict[key]
-                        changes = []
-                        
-                        # Compare each column
-                        for col in config['CHANGE_DETECTION']['track_columns']:
-                            if col not in config['CHANGE_DETECTION']['ignore_columns']:
-                                current_val = current_row[col]
-                                prev_val = prev_row[col]
-                                
-                                if compare_values(current_val, prev_val, col):
-                                    changes.append(f"{col}: {prev_val} → {current_val}")
-                        
-                        if changes:
-                            # Add to changes with all current data and change details
-                            change_row = current_row.copy()
-                            change_row['Change Type'] = 'Data Change'
-                            change_row['Change Details'] = '; '.join(changes)
-                            all_changes.append(change_row)
-                    else:
-                        # Check if this Doc Ref exists in a different path
-                        matching_docs = [(ref, path, row) for (ref, path), row in prev_data_dict.items() 
-                                       if ref == doc_ref]
-                        
-                        if matching_docs:
-                            # Found a document with the same Doc Ref in a different path
-                            # Check if it's the same document by comparing titles
-                            for prev_ref, prev_path, prev_row in matching_docs:
-                                prev_title = prev_row['Doc Title']
-                                
-                                if prev_title == doc_title:
-                                    # Same document, just moved
-                                    change_row = current_row.copy()
-                                    change_row['Change Type'] = 'Document Moved'
-                                    change_row['Change Details'] = f'Document moved from: {prev_path} to: {doc_path}'
-                                    all_changes.append(change_row)
-                                    break
-                            else:
-                                # No matching title found - this is a new document with duplicate Doc Ref
-                                change_row = current_row.copy()
-                                change_row['Change Type'] = 'New Document'
-                                change_row['Change Details'] = f'New document with duplicate Doc Ref. Existing documents with this Doc Ref: {", ".join(path for _, path, _ in matching_docs)}'
-                                all_changes.append(change_row)
-                        else:
-                            # New document
-                            change_row = current_row.copy()
-                            change_row['Change Type'] = 'New Document'
-                            change_row['Change Details'] = 'New document added'
-                            all_changes.append(change_row)
-                except Exception as e:
-                    print(f"Error processing row: {str(e)}")
-                    if args.debug:
-                        print("Row data:", current_row.to_dict())
-                    continue
-        
-        # Get counts for summary
+            if file_path.name in processed_files[project_code]:
+                if processed_files[project_code][file_path.name] == file_key:
+                    print(f"  ✓ {file_path.name} ({date_str} {time_str}) - Already processed")
+                else:
+                    print(f"  ↻ {file_path.name} ({date_str} {time_str}) - Updated, will reprocess")
+                    processed_files[project_code][file_path.name] = file_key
+            else:
+                print(f"  + {file_path.name} ({date_str} {time_str}) - New file, will process")
+                processed_files[project_code][file_path.name] = file_key
+    
+    # Save updated processed files record
+    save_processed_files_per_project(processed_files)
+    print(f"\nUpdated processed_files_per_project.json with all detected files")
+    
+    return processed_files
+
+def show_menu():
+    """Display the main menu and get user choice"""
+    print("\n" + "="*60)
+    print("           DOCUMENT REGISTER REPORT GENERATOR")
+    print("="*60)
+    print("1. Process latest file (original behavior)")
+    print("2. Process all projects (all unprocessed files)")
+    print("3. Process single project (all unprocessed files)")
+    print("4. Detect files only (scan and update tracking)")
+    print("5. Generate standalone report")
+    print("6. Exit")
+    print("-"*60)
+    
+    while True:
         try:
-            counts = get_counts(current_df, config)
-            all_counts[latest_timestamp] = counts
-        except Exception as e:
-            print(f"Error getting counts: {str(e)}")
-            if args.debug:
-                print("Current DataFrame state:")
-                print(current_df.info())
-            raise
-        
-        # Update processed files record
-        file_key = f"{date_str}_{time_str}"  # Use the string versions
-        processed_files[latest_file.name] = file_key
-        
-    except Exception as e:
-        print(f"Error processing {latest_file.name}: {str(e)}")
-        if args.debug:
-            import traceback
-            traceback.print_exc()
-        return
+            choice = input("Enter your choice (1-6): ").strip()
+            if choice in ['1', '2', '3', '4', '5', '6']:
+                return choice
+            else:
+                print("Invalid choice. Please enter a number between 1 and 6.")
+        except KeyboardInterrupt:
+            print("\n\nExiting...")
+            return '6'
+        except EOFError:
+            print("\n\nExiting...")
+            return '6'
+
+def get_project_selection():
+    """Get project selection from user"""
+    print("\n" + "-"*40)
+    print("PROJECT SELECTION")
+    print("-"*40)
+    print("Available projects:")
+    print("1. GreenwichPeninsula (GP)")
+    print("2. NewMalden (NM)")
+    print("3. OvalBlockB (OVB)")
     
-    # Create summary DataFrame
-    summary_data = []
-    for (date, time) in sorted(all_counts.keys()):
-        row = {
-            'Date': date.strftime('%d-%b-%Y'),  # Convert to string
-            'Time': time.strftime('%H:%M')      # Convert to string
-        }
-        counts = all_counts[(date, time)]
-        for key in sorted(counts.keys()):
-            row[key] = counts.get(key, 0)
-        summary_data.append(row)
-    
-    summary_df = pd.DataFrame(summary_data)
-    
-    # Create changes DataFrame
-    changes_df = pd.DataFrame(all_changes) if all_changes else pd.DataFrame(columns=list(current_df.columns) + ['Change Type', 'Change Details'])
-    
-    # Save to Excel
-    if args.output:
-        project_slug = slugify(args.output)
-        output_file = Path(args.output)
-    else:
-        project_slug = slugify(config.get('PROJECT_TITLE', 'summary'))
-        output_file = output_dir / f"{project_slug}_summary.xlsx"
-    
-    if save_excel_with_retry(summary_df, changes_df, current_df, output_file, config):
-        # Save processed files record
-        save_processed_files(processed_files)
-        print(f"\nSummary updated in {output_file}")
-        
-        # Generate progression report
-        progression_output = output_dir / f"{project_slug}_progression.xlsx"
-        if generate_progression_report(summary_df, progression_output, config, current_df):
-            print(f"Progression report generated in {progression_output}")
+    while True:
+        project_choice = input("Select project (1-3): ").strip()
+        if project_choice == '1':
+            return 'GreenwichPeninsula', 'GP'
+        elif project_choice == '2':
+            return 'NewMalden', 'NM'
+        elif project_choice == '3':
+            return 'OvalBlockB', 'OVB'
         else:
-            print("Failed to generate progression report")
+            print("Invalid choice. Please enter 1, 2, or 3.")
+
+def get_standalone_input():
+    """Get input file and project for standalone report"""
+    print("\n" + "-"*40)
+    print("STANDALONE REPORT GENERATION")
+    print("-"*40)
+    
+    # Get input file
+    while True:
+        input_file = input("Enter input file path: ").strip().strip('"')
+        if not input_file:
+            print("Input file path cannot be empty.")
+            continue
+        
+        input_path = Path(input_file)
+        if not input_path.exists():
+            print(f"File '{input_file}' does not exist.")
+            continue
+        
+        if not input_path.suffix.lower() in ['.xlsx', '.xls']:
+            print("Please select an Excel file (.xlsx or .xls)")
+            continue
+        
+        break
+    
+    # Get project name
+    print("\nAvailable projects:")
+    print("1. GreenwichPeninsula")
+    print("2. NewMalden") 
+    print("3. OvalBlockB")
+    print("4. Auto-detect (recommended)")
+    
+    while True:
+        project_choice = input("Select project (1-4): ").strip()
+        if project_choice == '1':
+            project = 'GreenwichPeninsula'
+            break
+        elif project_choice == '2':
+            project = 'NewMalden'
+            break
+        elif project_choice == '3':
+            project = 'OvalBlockB'
+            break
+        elif project_choice == '4':
+            project = None  # Auto-detect
+            break
+        else:
+            print("Invalid choice. Please enter 1, 2, 3, or 4.")
+    
+    return input_path, project
+
+def main():
+    """Main function with interactive menu"""
+    # Setup directories
+    input_dir = Path('input')
+    output_dir = Path('output')
+    output_dir.mkdir(exist_ok=True)
+    
+    while True:
+        choice = show_menu()
+        
+        if choice == '1':
+            # Process latest file (original behavior)
+            print("\nProcessing latest file...")
+            
+            # Load processed files record
+            processed_files = load_processed_files()
+            
+            # Dictionary to store all counts
+            all_counts = {}
+            all_changes = []
+            
+            # Get the previous latest data
+            previous_latest_data = None
+            output_file = output_dir / 'summary.xlsx'
+            if output_file.exists():
+                try:
+                    previous_latest_data = pd.read_excel(output_file, sheet_name='Latest Data')
+                    # Convert all columns to string
+                    for col in previous_latest_data.columns:
+                        previous_latest_data[col] = previous_latest_data[col].astype(str)
+                except Exception as e:
+                    print(f"Warning: Could not load previous latest data: {str(e)}")
+            
+            # Find the most recent file based on timestamps
+            latest_file = None
+            latest_timestamp = None
+            
+            for file_path in input_dir.glob("*.xlsx"):
+                if file_path.name.startswith('~$'):  # Skip temporary files
+                    continue
+                    
+                # Get timestamp from B4
+                date_str, time_str = get_file_timestamp(file_path)
+                if not date_str or not time_str:
+                    print(f"Skipping {file_path.name} - could not read timestamp")
+                    continue
+                    
+                # Convert to datetime for comparison
+                try:
+                    date = datetime.strptime(date_str, '%d-%b-%Y')
+                    time = datetime.strptime(time_str, '%H:%M').time()
+                    if latest_timestamp is None or (date, time) > latest_timestamp:
+                        latest_timestamp = (date, time)
+                        latest_file = file_path
+                except ValueError as e:
+                    print(f"Warning: Could not parse date/time from {file_path.name}: {str(e)}")
+                    continue
+            
+            if latest_file is None:
+                print("No valid files found to process")
+                input("\nPress Enter to continue...")
+                continue
+            
+            print(f"\nProcessing latest file: {latest_file.name}")
+            
+            # Load project configuration based on the latest file
+            config = load_project_config(None, latest_file)
+            
+            # Read the latest file
+            try:
+                current_df = pd.read_excel(latest_file, **config['EXCEL_SETTINGS'])
+                
+                # Convert all columns to string
+                for col in current_df.columns:
+                    try:
+                        current_df[col] = current_df[col].astype(str)
+                    except Exception as e:
+                        print(f"Warning: Error converting column '{col}' to string: {str(e)}")
+                
+                # Compare with previous latest data if it exists
+                if previous_latest_data is not None:
+                    # Create a dictionary of previous data using composite key (Doc Ref + Doc Path)
+                    prev_data_dict = {}
+                    for _, row in previous_latest_data.iterrows():
+                        key = (row['Doc Ref'], row['Doc Path'])
+                        prev_data_dict[key] = row
+                    
+                    # Note: We're only generating summary reports, so we don't need detailed change tracking
+                    # The comparison logic has been removed to simplify the script
+                
+                # Get counts for summary
+                try:
+                    counts = get_counts(current_df, config)
+                    all_counts[latest_timestamp] = counts
+                except Exception as e:
+                    print(f"Error getting counts: {str(e)}")
+                    raise
+                
+                # Update processed files record
+                date_str, time_str = get_file_timestamp(latest_file)
+                file_key = f"{date_str}_{time_str}"  # Use the string versions
+                processed_files[latest_file.name] = file_key
+                
+            except Exception as e:
+                print(f"Error processing {latest_file.name}: {str(e)}")
+                input("\nPress Enter to continue...")
+                continue
+            
+            # Create summary DataFrame
+            summary_data = []
+            for (date, time) in sorted(all_counts.keys()):
+                row = {
+                    'Date': date.strftime('%d-%b-%Y'),  # Convert to string
+                    'Time': time.strftime('%H:%M')      # Convert to string
+                }
+                counts = all_counts[(date, time)]
+                for key in sorted(counts.keys()):
+                    row[key] = counts.get(key, 0)
+                summary_data.append(row)
+            
+            summary_df = pd.DataFrame(summary_data)
+            
+            # Create changes DataFrame
+            changes_df = pd.DataFrame(all_changes) if all_changes else pd.DataFrame(columns=list(current_df.columns) + ['Change Type', 'Change Details'])
+            
+            # Save to Excel
+            project_slug = slugify(config.get('PROJECT_TITLE', 'summary'))
+            output_file = output_dir / f"{project_slug}_summary.xlsx"
+            
+            if save_excel_with_retry(summary_df, changes_df, current_df, output_file, config):
+                # Save processed files record
+                save_processed_files(processed_files)
+                print(f"\nSummary updated in {output_file}")
+                
+                # Generate progression report
+                progression_output = output_dir / f"{project_slug}_progression.xlsx"
+                if generate_progression_report(summary_df, progression_output, config, current_df):
+                    print(f"Progression report generated in {progression_output}")
+                else:
+                    print("Failed to generate progression report")
+            else:
+                print("\nPlease close any open Excel files and try again.")
+            
+            input("\nPress Enter to continue...")
+            
+        elif choice == '2':
+            # Process all projects
+            print("\nProcessing all projects...")
+            process_all_projects()
+            input("\nPress Enter to continue...")
+            
+        elif choice == '3':
+            # Process single project
+            project_name, project_code = get_project_selection()
+            print(f"\nProcessing single project: {project_name}")
+            process_single_project(project_name, project_code)
+            input("\nPress Enter to continue...")
+            
+        elif choice == '4':
+            # Detect files only
+            print("\nDetecting files in project folders...")
+            detect_project_files()
+            input("\nPress Enter to continue...")
+            
+        elif choice == '5':
+            # Generate standalone report
+            try:
+                input_file, project = get_standalone_input()
+                
+                # Load project configuration based on input file
+                config = load_project_config(project, input_file)
+                
+                # Generate output filename
+                project_slug = slugify(config.get('PROJECT_TITLE', 'standalone_report'))
+                output_file = output_dir / f"{project_slug}_standalone_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                
+                if generate_standalone_report(input_file, output_file, config):
+                    print(f"\nStandalone report generated successfully!")
+                else:
+                    print("\nFailed to generate standalone report.")
+                    
+            except KeyboardInterrupt:
+                print("\nCancelled.")
+            except Exception as e:
+                print(f"\nError: {str(e)}")
+            
+            input("\nPress Enter to continue...")
+            
+        elif choice == '6':
+            # Exit
+            print("\nGoodbye!")
+            break
+
+def process_all_projects():
+    """Process all projects in their respective input folders"""
+    # Setup directories
+    input_dir = Path('input')
+    output_dir = Path('output')
+    output_dir.mkdir(exist_ok=True)
+    
+    # Define project folders
+    project_folders = {
+        'OVB': input_dir / 'OVB',
+        'NM': input_dir / 'NM', 
+        'GP': input_dir / 'GP'
+    }
+    
+    # Load processed files record
+    processed_files = load_processed_files_per_project()
+    
+    # Process each project
+    for project_code, project_input_dir in project_folders.items():
+        if not project_input_dir.exists():
+            print(f"\nProject folder {project_input_dir} does not exist, skipping...")
+            continue
+        
+        # Map project codes to full names
+        project_names = {
+            'OVB': 'OvalBlockB',
+            'NM': 'NewMalden',
+            'GP': 'GreenwichPeninsula'
+        }
+        
+        project_name = project_names.get(project_code, project_code)
+        
+        # Process this project
+        success = process_project_files(project_name, project_input_dir, output_dir, processed_files)
+        
+        if success:
+            print(f"Successfully processed project: {project_name}")
+        else:
+            print(f"Failed to process project: {project_name}")
+    
+    # Save processed files record
+    save_processed_files_per_project(processed_files)
+    print(f"\n{'='*60}")
+    print("All projects processed!")
+    print(f"{'='*60}")
+
+def process_project_files(project_name, project_input_dir, output_dir, processed_files):
+    """Process all files for a specific project in chronological order"""
+    print(f"\n{'='*60}")
+    print(f"Processing project: {project_name}")
+    print(f"{'='*60}")
+    
+    # Get all files with timestamps for this project
+    files_with_timestamps = get_project_files_with_timestamps(project_input_dir)
+    
+    if not files_with_timestamps:
+        print(f"No valid files found in {project_input_dir}")
+        return False
+    
+    print(f"Found {len(files_with_timestamps)} files to process:")
+    for file_path, date, time, date_str, time_str in files_with_timestamps:
+        print(f"  - {file_path.name} ({date_str} {time_str})")
+    
+    # Initialize project-specific data
+    all_counts = {}
+    latest_data_df = None
+    
+    # Get the previous latest data for this project
+    project_slug = slugify(project_name)
+    project_output_file = output_dir / f"{project_slug}_summary.xlsx"
+    previous_latest_data = None
+    
+    if project_output_file.exists():
+        try:
+            previous_latest_data = pd.read_excel(project_output_file, sheet_name='Latest Data')
+            for col in previous_latest_data.columns:
+                previous_latest_data[col] = previous_latest_data[col].astype(str)
+        except Exception as e:
+            print(f"Warning: Could not load previous latest data for {project_name}: {str(e)}")
+    
+    if project_name not in processed_files:
+        processed_files[project_name] = {}
+    
+    for file_path, date, time, date_str, time_str in files_with_timestamps:
+        file_key = f"{date_str}_{time_str}"
+        if file_path.name in processed_files[project_name]:
+            if processed_files[project_name][file_path.name] == file_key:
+                print(f"Skipping {file_path.name} - already processed")
+                continue
+            else:
+                print(f"File {file_path.name} has been updated, reprocessing...")
+        print(f"\nProcessing: {file_path.name} ({date_str} {time_str})")
+        config = load_project_config(project_name, file_path)
+        try:
+            current_df = pd.read_excel(file_path, **config['EXCEL_SETTINGS'])
+            for col in current_df.columns:
+                try:
+                    current_df[col] = current_df[col].astype(str)
+                except Exception as e:
+                    print(f"Warning: Error converting column '{col}' to string: {str(e)}")
+            try:
+                counts = get_counts(current_df, config)
+                all_counts[(date, time)] = counts
+            except Exception as e:
+                print(f"Error getting counts: {str(e)}")
+                raise
+            processed_files[project_name][file_path.name] = file_key
+            latest_data_df = current_df.copy()
+            previous_latest_data = current_df.copy()
+        except Exception as e:
+            print(f"Error processing {file_path.name}: {str(e)}")
+            continue
+        summary_data = []
+        for (date, time) in sorted(all_counts.keys()):
+            row = {
+                'Date': date.strftime('%d-%b-%Y'),
+                'Time': time.strftime('%H:%M')
+            }
+            counts = all_counts[(date, time)]
+            for key in sorted(counts.keys()):
+                row[key] = counts.get(key, 0)
+            summary_data.append(row)
+        summary_df = pd.DataFrame(summary_data)
+        # Save to Excel (summary only)
+        if save_excel_with_retry(summary_df, None, latest_data_df, project_output_file, config):
+            print(f"\nSummary updated in {project_output_file}")
+            progression_output = output_dir / f"{project_slug}_progression.xlsx"
+            print(f"Generating progression report for {project_name} with {len(summary_df)} data points...")
+            if generate_progression_report(summary_df, progression_output, config, latest_data_df):
+                print(f"Progression report updated in {progression_output}")
+            else:
+                print("Failed to generate progression report")
+                print(f"Debug: summary_df shape: {summary_df.shape}")
+                print(f"Debug: summary_df columns: {summary_df.columns.tolist()}")
+                print(f"Debug: latest_data_df shape: {latest_data_df.shape if latest_data_df is not None else 'None'}")
+        else:
+            print("\nPlease close any open Excel files and try again.")
+            return False
+    # After all files are processed, fill empty cells in the progression report
+    progression_output = output_dir / f"{project_slug}_progression.xlsx"
+    fill_empty_cells_with_zeros_in_file(str(progression_output))
+    return True
+
+def process_single_project(project_name, project_code):
+    """Process all files for a specific project in chronological order"""
+    print(f"\n{'='*60}")
+    print(f"Processing project: {project_name}")
+    print(f"{'='*60}")
+    
+    # Setup directories
+    input_dir = Path('input')
+    output_dir = Path('output')
+    output_dir.mkdir(exist_ok=True)
+    
+    # Define project folders
+    project_folders = {
+        'OVB': input_dir / 'OVB',
+        'NM': input_dir / 'NM',
+        'GP': input_dir / 'GP'
+    }
+    
+    # Load processed files record
+    processed_files = load_processed_files_per_project()
+    
+    # Process this project
+    success = process_project_files(project_name, project_folders[project_code], output_dir, processed_files)
+    
+    if success:
+        print(f"Successfully processed project: {project_name}")
     else:
-        print("\nPlease close any open Excel files and try again.")
+        print(f"Failed to process project: {project_name}")
+    
+    # Save processed files record
+    save_processed_files_per_project(processed_files)
+    print(f"\n{'='*60}")
+    print(f"Project {project_name} processed!")
+    print(f"{'='*60}")
 
 if __name__ == "__main__":
     main() 
