@@ -36,6 +36,9 @@ ENV/
 *.xls
 *.csv
 
+# Generated output files
+output/
+
 # Logs
 *.log
 
