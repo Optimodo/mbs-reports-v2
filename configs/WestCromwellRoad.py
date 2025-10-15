@@ -79,3 +79,46 @@ CERTIFICATE_SETTINGS = {
     'status_suffix': ' (Certificates)'
 }
 
+# Status Mappings - Maps actual status values to standardized categories
+STATUS_MAPPINGS = {
+    'Construction': {
+        'display_name': 'Construction',
+        'color': '25E82C',  # Green
+        'statuses': [
+            'Construction'
+        ],
+        'description': 'Construction documents'
+    },
+    'Proposal': {
+        'display_name': 'Proposal',
+        'color': '87CEEB',  # Light blue
+        'statuses': [
+            'Proposal'
+        ],
+        'description': 'Proposal documents'
+    },
+    'For Comments': {
+        'display_name': 'For Comments',
+        'color': 'EDDDA1',  # Yellow
+        'statuses': [
+            'For Comments'
+        ],
+        'description': 'Under review'
+    },
+    'Superseded': {
+        'display_name': 'Superseded',
+        'color': 'D3D3D3',  # Light gray
+        'statuses': [
+            'Superseded'
+        ],
+        'description': 'Superseded documents'
+    }
+}
+
+# Display order for progression reports
+STATUS_DISPLAY_ORDER = [
+    'Construction',
+    'Proposal',
+    'For Comments',
+    'Superseded'
+]

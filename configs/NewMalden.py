@@ -57,4 +57,62 @@ CERTIFICATE_SETTINGS = {
     'certificate_types': ['Certificate'],
     'summary_label': 'P01-PXX (Certificates)',
     'status_suffix': ' (Certificates)'
-} 
+}
+
+# Status Mappings - Maps actual status values to standardized categories
+STATUS_MAPPINGS = {
+    'Status A': {
+        'display_name': 'Status A',
+        'color': '25E82C',  # Green
+        'statuses': [
+            'A - Proceed',
+            'A - Proceed (Lead Reviewer)'
+        ],
+        'description': 'Approved to proceed'
+    },
+    'Status B': {
+        'display_name': 'Status B',
+        'color': 'EDDDA1',  # Yellow
+        'statuses': [
+            'B - Proceed with Comments',
+            'B - Proceed with Comments (Lead Reviewer)'
+        ],
+        'description': 'Proceed with comments'
+    },
+    'Status C': {
+        'display_name': 'Status C',
+        'color': 'ED1111',  # Red
+        'statuses': [
+            'C - Rejected',
+            'C - Rejected (Lead Reviewer)',
+            'QC Rejected'
+        ],
+        'description': 'Rejected documents'
+    },
+    'Under Review': {
+        'display_name': 'Under Review',
+        'color': 'FFFFFF',  # White
+        'statuses': [
+            'Under Review',
+            'QC Checked'
+        ],
+        'description': 'Under review or QC check'
+    },
+    'Other': {
+        'display_name': 'Other',
+        'color': 'D3D3D3',  # Light gray
+        'statuses': [
+            '---'
+        ],
+        'description': 'Other or unspecified status'
+    }
+}
+
+# Display order for progression reports
+STATUS_DISPLAY_ORDER = [
+    'Status A',
+    'Status B',
+    'Status C',
+    'Under Review',
+    'Other'
+] 

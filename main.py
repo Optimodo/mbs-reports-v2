@@ -30,6 +30,8 @@ from utils import (
     slugify,
     get_file_timestamp
 )
+from data import DocumentDatabase
+from scripts.db_manager import update_database_with_new_files
 
 
 def show_menu():
@@ -41,15 +43,18 @@ def show_menu():
     print("\n" + "="*60)
     print("Document Register Processor")
     print("="*60)
-    print("1. Process latest file")
-    print("2. Process all projects")
-    print("3. Process single project")
+    print("1. Process latest file (legacy)")
+    print("2. Process all projects (incremental - legacy)")
+    print("3. Process single project (legacy)")
     print("4. Detect files only")
     print("5. Generate standalone report")
-    print("6. Exit")
+    print("6. Process from DATABASE (recommended)")
+    print("7. Regenerate all reports from scratch (legacy)")
+    print("8. Exit")
     print("="*60)
+    print("\n💡 TIP: Use option 6 for database-powered processing")
     
-    choice = input("\nEnter your choice (1-6): ").strip()
+    choice = input("\nEnter your choice (1-8): ").strip()
     return choice
 
 
@@ -373,6 +378,291 @@ def process_all_projects():
     print(f"{'='*60}")
 
 
+def process_projects_from_database():
+    """Process all projects using database as data source.
+    
+    This function:
+    1. Updates database with any new files
+    2. Queries database for all snapshots per project
+    3. Generates reports from database data (simulating file processing loop)
+    """
+    print("\n" + "="*60)
+    print("PROCESSING FROM DATABASE")
+    print("="*60)
+    
+    # Step 1: Update database with any new files
+    print("\nStep 1: Checking for new files to import into database...")
+    try:
+        stats = update_database_with_new_files()
+        if stats['files_imported'] > 0:
+            print(f"✓ Imported {stats['files_imported']} new files")
+        else:
+            print("✓ Database is up to date")
+    except Exception as e:
+        print(f"✗ Error updating database: {str(e)}")
+        print("Continuing with existing database data...")
+    
+    # Step 2: Generate reports from database
+    print("\nStep 2: Generating reports from database...")
+    
+    # Setup directories
+    output_dir = Path('output')
+    output_dir.mkdir(exist_ok=True)
+    
+    # Project name mapping
+    project_names = {
+        'OvalBlockB': 'OvalBlockB',
+        'NewMalden': 'NewMalden',
+        'GreenwichPeninsula': 'GreenwichPeninsula',
+        'HollowayPark': 'HollowayPark',
+        'WestCromwellRoad': 'WestCromwellRoad'
+    }
+    
+    with DocumentDatabase() as db:
+        # Get all projects from database
+        db_projects = db.get_all_projects()
+        
+        if not db_projects:
+            print("✗ No data in database. Please run db_manager.py --import-all first")
+            return
+        
+        print(f"Found {len(db_projects)} projects in database")
+        
+        # Process each project
+        for project_name in db_projects:
+            print(f"\n{'='*60}")
+            print(f"Processing: {project_name}")
+            print(f"{'='*60}")
+            
+            try:
+                # Load project configuration
+                config = load_project_config(project_name)
+                
+                # Get summary data from database (all snapshots)
+                summary_df = db.get_summary_dataframe(project_name)
+                
+                if summary_df.empty:
+                    print(f"✗ No data for {project_name}")
+                    continue
+                
+                print(f"Found {len(summary_df)} snapshots")
+                
+                # Get latest documents
+                latest_data_df = db.get_latest_documents(project_name)
+                
+                # Project output files
+                project_slug = slugify(project_name)
+                summary_output = output_dir / f"{project_slug}_summary.xlsx"
+                progression_output = output_dir / f"{project_slug}_progression.xlsx"
+                
+                # Delete existing progression report to rebuild from scratch
+                if progression_output.exists():
+                    progression_output.unlink()
+                    print(f"Deleted existing progression report")
+                
+                # Process each snapshot (simulating file-by-file processing)
+                print(f"\nProcessing {len(summary_df)} snapshots...")
+                
+                for idx, row in summary_df.iterrows():
+                    snapshot_date = row['Date']
+                    snapshot_time = row['Time']
+                    
+                    # Create single-row summary for this snapshot
+                    snapshot_summary = pd.DataFrame([row])
+                    
+                    # Generate progression report (adds one column per snapshot)
+                    if generate_progression_report(snapshot_summary, progression_output, config, latest_data_df):
+                        print(f"  ✓ Added column: {snapshot_date} {snapshot_time}")
+                    else:
+                        print(f"  ✗ Failed to add column: {snapshot_date} {snapshot_time}")
+                
+                # Generate summary report with all data
+                if save_excel_with_retry(summary_df, None, latest_data_df, summary_output, config):
+                    print(f"\n✓ Summary saved: {summary_output}")
+                else:
+                    print(f"\n✗ Failed to save summary")
+                
+                # Fill empty cells in progression report
+                fill_empty_cells_with_zeros_in_file(str(progression_output))
+                print(f"✓ Progression completed: {progression_output}")
+                
+            except Exception as e:
+                print(f"✗ Error processing {project_name}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                continue
+    
+    print(f"\n{'='*60}")
+    print("Database processing complete!")
+    print(f"{'='*60}")
+
+
+def regenerate_all_reports():
+    """Regenerate all reports from scratch using all available input files.
+    
+    This function:
+    1. Deletes existing progression reports
+    2. Processes ALL files in each project folder (ignoring processed files tracking)
+    3. Regenerates reports completely from all available data
+    """
+    print("\n" + "="*60)
+    print("REGENERATE ALL REPORTS FROM SCRATCH")
+    print("="*60)
+    print("\nThis will:")
+    print("  - Delete existing progression reports")
+    print("  - Process ALL files in input folders")
+    print("  - Regenerate reports from scratch")
+    print("\nExisting summary reports will be overwritten.")
+    
+    response = input("\nAre you sure you want to continue? (yes/no): ").strip().lower()
+    
+    if response != 'yes':
+        print("Regeneration cancelled")
+        return
+    
+    # Setup directories
+    input_dir = Path('input')
+    output_dir = Path('output')
+    output_dir.mkdir(exist_ok=True)
+    
+    # Define project folders
+    project_folders = {
+        'OVB': input_dir / 'OVB',
+        'NM': input_dir / 'NM',
+        'GP': input_dir / 'GP',
+        'HP': input_dir / 'HP',
+        'WCR': input_dir / 'WCR'
+    }
+    
+    # Project name mapping
+    project_names = {
+        'OVB': 'OvalBlockB',
+        'NM': 'NewMalden',
+        'GP': 'GreenwichPeninsula',
+        'HP': 'HollowayPark',
+        'WCR': 'WestCromwellRoad'
+    }
+    
+    # Delete existing progression reports
+    print("\nDeleting existing progression reports...")
+    for project_code, project_name in project_names.items():
+        project_slug = slugify(project_name)
+        progression_file = output_dir / f"{project_slug}_progression.xlsx"
+        progression_pdf = output_dir / f"{project_slug}_progression.pdf"
+        
+        if progression_file.exists():
+            progression_file.unlink()
+            print(f"  Deleted {progression_file.name}")
+        if progression_pdf.exists():
+            progression_pdf.unlink()
+            print(f"  Deleted {progression_pdf.name}")
+    
+    print("\nRegenerating reports...")
+    
+    # Process each project
+    for project_code, project_input_dir in project_folders.items():
+        project_name = project_names[project_code]
+        
+        print(f"\n{'='*60}")
+        print(f"Regenerating: {project_name}")
+        print(f"{'='*60}")
+        
+        if not project_input_dir.exists():
+            print(f"Project folder {project_input_dir} does not exist, skipping...")
+            continue
+        
+        # Get all files with timestamps
+        files_with_timestamps = get_project_files_with_timestamps(project_input_dir)
+        
+        if not files_with_timestamps:
+            print(f"No valid files found in {project_input_dir}")
+            continue
+        
+        # Track all counts and latest data
+        all_counts = {}
+        latest_data_df = None
+        config = None
+        
+        # Project output files
+        project_slug = slugify(project_name)
+        project_output_file = output_dir / f"{project_slug}_summary.xlsx"
+        
+        # Process ALL files in chronological order
+        for file_path, date, time, date_str, time_str in files_with_timestamps:
+            print(f"\nProcessing: {file_path.name} ({date_str} {time_str})")
+            config = load_project_config(project_name, file_path)
+            
+            try:
+                # Load the document listing
+                current_df = load_document_listing(file_path, config)
+                if current_df is None:
+                    print(f"  Warning: No data in {file_path.name}")
+                    continue
+                
+                # Get counts
+                try:
+                    counts = get_counts(current_df, config)
+                    all_counts[(date, time)] = counts
+                except Exception as e:
+                    print(f"  Error getting counts: {str(e)}")
+                    continue
+                
+                latest_data_df = current_df.copy()
+                
+                # Generate progression report for this file (add new column)
+                progression_output = output_dir / f"{project_slug}_progression.xlsx"
+                
+                # Create a single-row summary DataFrame for this file
+                file_summary_data = [{
+                    'Date': date.strftime('%d-%b-%Y'),
+                    'Time': time.strftime('%H:%M')
+                }]
+                for key in sorted(counts.keys()):
+                    file_summary_data[0][key] = counts.get(key, 0)
+                file_summary_df = pd.DataFrame(file_summary_data)
+                
+                print(f"  Adding to progression report...")
+                if generate_progression_report(file_summary_df, progression_output, config, current_df):
+                    print(f"  ✓ Added column for {date_str} {time_str}")
+                else:
+                    print(f"  ✗ Failed to update progression report")
+                    
+            except Exception as e:
+                print(f"  ✗ Error processing {file_path.name}: {str(e)}")
+                continue
+        
+        # Create summary DataFrame from all counts
+        if all_counts and latest_data_df is not None and config is not None:
+            summary_data = []
+            for (date, time) in sorted(all_counts.keys()):
+                row = {
+                    'Date': date.strftime('%d-%b-%Y'),
+                    'Time': time.strftime('%H:%M')
+                }
+                counts = all_counts[(date, time)]
+                for key in sorted(counts.keys()):
+                    row[key] = counts.get(key, 0)
+                summary_data.append(row)
+            summary_df = pd.DataFrame(summary_data)
+            
+            # Save summary report
+            if save_excel_with_retry(summary_df, None, latest_data_df, project_output_file, config):
+                print(f"\n✓ Summary saved to {project_output_file}")
+            else:
+                print(f"\n✗ Failed to save summary")
+            
+            # Fill empty cells in progression report
+            progression_output = output_dir / f"{project_slug}_progression.xlsx"
+            fill_empty_cells_with_zeros_in_file(str(progression_output))
+            print(f"✓ Progression report completed: {progression_output}")
+        else:
+            print(f"\n✗ No data processed for {project_name}")
+    
+    print(f"\n{'='*60}")
+    print("All reports regenerated!")
+    print(f"{'='*60}")
+
+
 def main():
     """Main function with interactive menu."""
     # Setup directories
@@ -528,6 +818,16 @@ def main():
             input("\nPress Enter to continue...")
             
         elif choice == '6':
+            # Process from database (recommended workflow)
+            process_projects_from_database()
+            input("\nPress Enter to continue...")
+            
+        elif choice == '7':
+            # Regenerate all reports from scratch (legacy)
+            regenerate_all_reports()
+            input("\nPress Enter to continue...")
+            
+        elif choice == '8':
             # Exit
             print("\nGoodbye!")
             break

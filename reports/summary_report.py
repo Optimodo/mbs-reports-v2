@@ -18,6 +18,12 @@ from styles.formatting import (
     STATUS_STYLES,
     apply_status_style
 )
+from utils.status_mapping import (
+    get_status_category,
+    get_status_color,
+    get_grouped_status_counts,
+    get_status_display_order
+)
 
 # Suppress openpyxl warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
@@ -523,46 +529,49 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                 if len(status_counts) == 0:
                     return None
                 
-                # Group statuses according to STATUS_STYLES categories
-                grouped_counts = {
-                    'Published': 0,     # Published gets its own category but will be grouped with Status A for charts
-                    'Status A': 0,
-                    'Status B': 0, 
-                    'Status C': 0,
-                    'Other': 0
-                }
+                # Use config-based status grouping
+                chart_grouped_counts = get_grouped_status_counts(rev_data, config)
                 
-                for status, count in status_counts.items():
-                    # Check which category this status belongs to
-                    categorized = False
-                    for style_name, style_config in STATUS_STYLES.items():
-                        if any(term == status for term in style_config['search_terms']):
-                            if style_name == 'PUBLISHED':
-                                grouped_counts['Published'] += count
-                            if style_name == 'STATUS A':
-                                grouped_counts['Status A'] += count
-                            elif style_name == 'STATUS B':
-                                grouped_counts['Status B'] += count
-                            elif style_name == 'STATUS C':
-                                grouped_counts['Status C'] += count
-                            else:
-                                if style_name != 'PUBLISHED':  # Don't double-count Published
-                                    grouped_counts['Other'] += count
-                            categorized = True
-                            break
+                # If no grouped counts or config not available, fall back to hardcoded logic
+                if not chart_grouped_counts:
+                    # Fallback: Group statuses according to STATUS_STYLES categories
+                    grouped_counts = {
+                        'Published': 0,
+                        'Status A': 0,
+                        'Status B': 0, 
+                        'Status C': 0,
+                        'Other': 0
+                    }
                     
-                    # If not categorized, add to Other
-                    if not categorized:
-                        grouped_counts['Other'] += count
-                
-                # For chart purposes, combine Published with Status A
-                chart_grouped_counts = grouped_counts.copy()
-                if chart_grouped_counts['Published'] > 0:
-                    chart_grouped_counts['Status A'] += chart_grouped_counts['Published']
-                    del chart_grouped_counts['Published']
-                
-                # Remove categories with zero counts
-                chart_grouped_counts = {k: v for k, v in chart_grouped_counts.items() if v > 0}
+                    for status, count in status_counts.items():
+                        categorized = False
+                        for style_name, style_config in STATUS_STYLES.items():
+                            if any(term == status for term in style_config['search_terms']):
+                                if style_name == 'PUBLISHED':
+                                    grouped_counts['Published'] += count
+                                if style_name == 'STATUS A':
+                                    grouped_counts['Status A'] += count
+                                elif style_name == 'STATUS B':
+                                    grouped_counts['Status B'] += count
+                                elif style_name == 'STATUS C':
+                                    grouped_counts['Status C'] += count
+                                else:
+                                    if style_name != 'PUBLISHED':
+                                        grouped_counts['Other'] += count
+                                categorized = True
+                                break
+                        
+                        if not categorized:
+                            grouped_counts['Other'] += count
+                    
+                    # For chart purposes, combine Published with Status A
+                    chart_grouped_counts = grouped_counts.copy()
+                    if chart_grouped_counts.get('Published', 0) > 0:
+                        chart_grouped_counts['Status A'] += chart_grouped_counts['Published']
+                        del chart_grouped_counts['Published']
+                    
+                    # Remove categories with zero counts
+                    chart_grouped_counts = {k: v for k, v in chart_grouped_counts.items() if v > 0}
                 
                 if not chart_grouped_counts:
                     return None
@@ -611,14 +620,21 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                 chart.legend.position = 'r'  # Position legend to the right
                 chart.legend.layout = None  # Let Excel auto-position the legend
                 
-                # Style the chart colors to match STATUS_STYLES
-                # Define colors for each category
-                colors = {
-                    'Status A': '00B050',  # Green
-                    'Status B': 'EDDDA1',  # Beige (matching STATUS_STYLES)
-                    'Status C': 'ED1111',  # Red
-                    'Other': '808080'      # Grey
-                }
+                # Style the chart colors based on config or fallback to STATUS_STYLES
+                # Build colors dictionary from config
+                colors = {}
+                if config and 'STATUS_MAPPINGS' in config:
+                    # Use config-based colors
+                    for category, mapping in config['STATUS_MAPPINGS'].items():
+                        colors[category] = mapping.get('color', 'FFFFFF')
+                else:
+                    # Fallback to hardcoded colors
+                    colors = {
+                        'Status A': '00B050',  # Green
+                        'Status B': 'EDDDA1',  # Beige
+                        'Status C': 'ED1111',  # Red
+                        'Other': '808080'      # Grey
+                    }
                 
                 # Apply colors to chart slices
                 try:

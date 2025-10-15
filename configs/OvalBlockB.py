@@ -59,3 +59,59 @@ CERTIFICATE_SETTINGS = {
     'summary_label': 'P01-PXX (Certificates)',
     'status_suffix': ' (Certificates)'
 }
+
+# Status Mappings - Maps actual status values to standardized categories
+STATUS_MAPPINGS = {
+    'Status A': {
+        'display_name': 'Status A',
+        'color': '25E82C',  # Green
+        'statuses': [
+            'Accepted',
+            'Published'
+        ],
+        'description': 'Approved/Accepted documents'
+    },
+    'Status B': {
+        'display_name': 'Status B',
+        'color': 'EDDDA1',  # Yellow
+        'statuses': [
+            'Accepted with Comments'
+        ],
+        'description': 'Approved with comments'
+    },
+    'Status C': {
+        'display_name': 'Status C',
+        'color': 'ED1111',  # Red
+        'statuses': [
+            'Rejected',
+            'QA - Rejected'
+        ],
+        'description': 'Rejected documents'
+    },
+    'Shared': {
+        'display_name': 'Shared',
+        'color': 'E0F090',  # Light yellow-green
+        'statuses': [
+            'Shared',
+            'For Sharing'
+        ],
+        'description': 'Shared for review'
+    },
+    'Withdrawn': {
+        'display_name': 'Withdrawn/Obsolete',
+        'color': 'D3D3D3',  # Light gray
+        'statuses': [
+            'Withdrawn-Obsolete'
+        ],
+        'description': 'Withdrawn or obsolete documents'
+    }
+}
+
+# Display order for progression reports
+STATUS_DISPLAY_ORDER = [
+    'Status A',
+    'Status B',
+    'Status C',
+    'Shared',
+    'Withdrawn'
+]

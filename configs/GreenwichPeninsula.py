@@ -57,4 +57,55 @@ CERTIFICATE_SETTINGS = {
     'certificate_types': ['CE - Certificate (CE)'],
     'summary_label': 'P01-PXX (Certificates)',
     'status_suffix': ' (Certificates)'
-} 
+}
+
+# Status Mappings - Maps actual status values to standardized categories
+# This allows project-specific status terminology to be properly categorized
+STATUS_MAPPINGS = {
+    'Status A': {
+        'display_name': 'Status A',
+        'color': '25E82C',  # Green
+        'statuses': [
+            'A - Authorized and Accepted',
+            'Accepted'
+        ],
+        'description': 'Approved/Accepted documents'
+    },
+    'Status B': {
+        'display_name': 'Status B',
+        'color': 'EDDDA1',  # Yellow
+        'statuses': [
+            'B - Partial Sign Off (with comment)',
+            'Accepted with Comments'
+        ],
+        'description': 'Approved with comments'
+    },
+    'Status C': {
+        'display_name': 'Status C',
+        'color': 'ED1111',  # Red
+        'statuses': [
+            'C-Rejected',
+            'C - Rejected',
+            'Rejected'
+        ],
+        'description': 'Rejected documents'
+    },
+    'Information': {
+        'display_name': 'For Information',
+        'color': 'FFFFFF',  # White
+        'statuses': [
+            'For Information',
+            'For Commenting',
+            'Reviewed'
+        ],
+        'description': 'Informational or under review'
+    }
+}
+
+# Display order for progression reports (order matters for chart generation)
+STATUS_DISPLAY_ORDER = [
+    'Status A',
+    'Status B',
+    'Status C',
+    'Information'
+] 

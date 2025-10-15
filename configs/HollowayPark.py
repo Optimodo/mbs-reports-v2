@@ -43,6 +43,61 @@ CERTIFICATE_SETTINGS = {
     'enabled': False
 }
 
+# Status Mappings - Maps actual status values to standardized categories
+# Note: The custom map_holloway_park_status() function transforms dual-column
+# statuses into these standardized values, which are then mapped here
+STATUS_MAPPINGS = {
+    'Status A': {
+        'display_name': 'Status A (Construction)',
+        'color': '25E82C',  # Green
+        'statuses': [
+            'Status A'  # From map_holloway_park_status when Status='Construction'
+        ],
+        'description': 'Construction status documents'
+    },
+    'Status B': {
+        'display_name': 'Status B',
+        'color': 'EDDDA1',  # Yellow
+        'statuses': [
+            'Status B'  # From map_holloway_park_status when Design Status='B'
+        ],
+        'description': 'Design Status B'
+    },
+    'Status C': {
+        'display_name': 'Status C',
+        'color': 'ED1111',  # Red
+        'statuses': [
+            'Status C'  # From map_holloway_park_status when Design Status='C'
+        ],
+        'description': 'Design Status C'
+    },
+    'Preliminary': {
+        'display_name': 'Preliminary',
+        'color': '87CEEB',  # Light blue
+        'statuses': [
+            'Preliminary'
+        ],
+        'description': 'Preliminary documents'
+    },
+    'Other': {
+        'display_name': 'Other',
+        'color': 'D3D3D3',  # Light gray
+        'statuses': [
+            'Other'  # All unmapped statuses (Information, Tender, IFC-pending, etc.)
+        ],
+        'description': 'Information, Tender, IFC-pending, Contract, As-Built, Record, Planning, etc.'
+    }
+}
+
+# Display order for progression reports
+STATUS_DISPLAY_ORDER = [
+    'Status A',
+    'Status B',
+    'Status C',
+    'Preliminary',
+    'Other'
+]
+
 # Custom status mapping for Holloway Park
 # This project uses a dual-column status system:
 # - Column F: 'Status' (can be 'Construction', 'IFC-pending', etc.)

@@ -8,6 +8,11 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.worksheet.page import PageMargins
 
 from styles.formatting import PROGRESSION_STATUS_ORDER
+from utils.status_mapping import (
+    get_status_category,
+    get_status_display_order,
+    get_grouped_status_counts
+)
 
 # Suppress openpyxl warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
@@ -210,7 +215,13 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
         # Function to get status count for a specific status group (all documents)
         def get_status_count(status_group):
             total = 0
-            status_terms = PROGRESSION_STATUS_ORDER[status_group]['status_terms']
+            
+            # Use config-based mappings if available
+            if config and 'STATUS_MAPPINGS' in config:
+                status_terms = config['STATUS_MAPPINGS'].get(status_group, {}).get('statuses', [])
+            else:
+                # Fallback to hardcoded PROGRESSION_STATUS_ORDER
+                status_terms = PROGRESSION_STATUS_ORDER.get(status_group, {}).get('status_terms', [])
             
             for col in status_columns:
                 # Extract the actual status name from the column name
@@ -226,7 +237,13 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 return get_status_count(status_group)
             
             total = 0
-            status_terms = PROGRESSION_STATUS_ORDER[status_group]['status_terms']
+            
+            # Use config-based mappings if available
+            if config and 'STATUS_MAPPINGS' in config:
+                status_terms = config['STATUS_MAPPINGS'].get(status_group, {}).get('statuses', [])
+            else:
+                # Fallback to hardcoded PROGRESSION_STATUS_ORDER
+                status_terms = PROGRESSION_STATUS_ORDER.get(status_group, {}).get('status_terms', [])
             
             # Filter data by revision type
             if revision_type == 'P':
@@ -237,29 +254,10 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 # For other revision types, return 0 or handle as needed
                 return 0
             
-            # Check if this is Holloway Park project (custom status mapping)
-            is_holloway_park = config.get('PROJECT_TITLE') == 'Holloway Park'
-            
-            if is_holloway_park:
-                # For Holloway Park, map status group names to the custom mapped statuses
-                status_mapping = {
-                    'Status A': 'Status A',
-                    'Status B': 'Status B', 
-                    'Status C': 'Status C',
-                    'Preliminary': 'Preliminary',
-                    'Other': 'Other'
-                }
-                
-                # Get the mapped status name for this status group
-                mapped_status = status_mapping.get(status_group)
-                if mapped_status:
-                    count = len(filtered_data[filtered_data['Status'] == mapped_status])
-                    total += count
-            else:
-                # For other projects, use the original logic
-                for status_term in status_terms:
-                    count = len(filtered_data[filtered_data['Status'] == status_term])
-                    total += count
+            # Count documents with statuses in the status_terms list
+            for status_term in status_terms:
+                count = len(filtered_data[filtered_data['Status'] == status_term])
+                total += count
             
             return total
         
@@ -276,28 +274,31 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
             else:
                 return 0
             
-            # Check if this is Holloway Park project (custom status mapping)
-            is_holloway_park = config.get('PROJECT_TITLE') == 'Holloway Park'
+            # Get all defined status terms from config or fallback
+            all_defined_statuses = set()
             
-            if is_holloway_park:
-                # For Holloway Park, 'Other' status is already counted in the status groups
+            if config and 'STATUS_MAPPINGS' in config:
+                # If there's an 'Other' category in the mapping, it's already counted
                 # So we return 0 to avoid double counting
-                return 0
+                if 'Other' in config['STATUS_MAPPINGS']:
+                    return 0
+                
+                # Otherwise, collect all defined statuses from config
+                for status_group, mapping in config['STATUS_MAPPINGS'].items():
+                    all_defined_statuses.update(mapping.get('statuses', []))
             else:
-                # For other projects, use the original logic
-                # Get all defined status terms
-                all_defined_statuses = set()
+                # Fallback to hardcoded PROGRESSION_STATUS_ORDER
                 for status_group in PROGRESSION_STATUS_ORDER.values():
-                    all_defined_statuses.update(status_group['status_terms'])
-                
-                # Count documents with statuses not in the defined list
-                other_count = 0
-                for status in filtered_data['Status'].unique():
-                    if status not in all_defined_statuses:
-                        count = len(filtered_data[filtered_data['Status'] == status])
-                        other_count += count
-                
-                return other_count
+                    all_defined_statuses.update(status_group.get('status_terms', []))
+            
+            # Count documents with statuses not in the defined list
+            other_count = 0
+            for status in filtered_data['Status'].unique():
+                if status not in all_defined_statuses:
+                    count = len(filtered_data[filtered_data['Status'] == status])
+                    other_count += count
+            
+            return other_count
         
         # Start row for data
         current_row = 3
@@ -614,11 +615,26 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
             row = start_row
             latest_data = summary_df.iloc[-1]  # Get the latest data
             
+            # Get status display order from config or fallback
+            if config and 'STATUS_DISPLAY_ORDER' in config:
+                status_order = config['STATUS_DISPLAY_ORDER']
+                status_mappings = config.get('STATUS_MAPPINGS', {})
+            else:
+                # Fallback to hardcoded order
+                status_order = list(PROGRESSION_STATUS_ORDER.keys())
+                status_mappings = PROGRESSION_STATUS_ORDER
+            
             # Add each status in the defined order
-            for status_group in PROGRESSION_STATUS_ORDER:
+            for status_group in status_order:
                 # Add row header if it's a new sheet
                 if next_col == 2:
-                    sheet[f'A{row}'] = PROGRESSION_STATUS_ORDER[status_group]['display_name']
+                    # Get display name from config or fallback
+                    if config and 'STATUS_MAPPINGS' in config:
+                        display_name = status_mappings.get(status_group, {}).get('display_name', status_group)
+                    else:
+                        display_name = status_mappings.get(status_group, {}).get('display_name', status_group)
+                    
+                    sheet[f'A{row}'] = display_name
                     sheet[f'A{row}'].font = Font(name='Calibri', size=11)
                     sheet[f'A{row}'].alignment = Alignment(horizontal='left', vertical='center')
                 
@@ -631,12 +647,11 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 
                 row += 1
             
-            # Check if this is Holloway Park project
-            is_holloway_park = config.get('PROJECT_TITLE') == 'Holloway Park'
+            # Check if 'Other' is already included in status groups
+            has_other_in_config = config and 'STATUS_MAPPINGS' in config and 'Other' in config['STATUS_MAPPINGS']
             
-            # For Holloway Park, skip the "Other Status" row since 'Other' is already included in status groups
-            # For other projects, add "Other Status" row to maintain consistent structure
-            if not is_holloway_park:
+            # Only add "Other Status" row if it's not already in the config
+            if not has_other_in_config:
                 # Add row header if it's a new sheet
                 if next_col == 2:
                     sheet[f'A{row}'] = 'Other Status'
@@ -759,7 +774,12 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
         current_row = add_column_headers(current_row)
         current_row = add_status_data_rows(current_row, 'P')
         # Add total row for P revision statuses
-        p_status_total = sum(get_filtered_status_count(status_group, 'P') for status_group in PROGRESSION_STATUS_ORDER) + get_other_status_count('P')
+        # Get status order from config or fallback
+        if config and 'STATUS_DISPLAY_ORDER' in config:
+            status_order = config['STATUS_DISPLAY_ORDER']
+        else:
+            status_order = list(PROGRESSION_STATUS_ORDER.keys())
+        p_status_total = sum(get_filtered_status_count(status_group, 'P') for status_group in status_order) + get_other_status_count('P')
         current_row = add_total_row(current_row, p_status_total, 'P Status Total')
         current_row += 1  # Add spacing
         
@@ -777,7 +797,7 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
         current_row = add_column_headers(current_row)
         current_row = add_status_data_rows(current_row, 'C')
         # Add total row for C revision statuses
-        c_status_total = sum(get_filtered_status_count(status_group, 'C') for status_group in PROGRESSION_STATUS_ORDER) + get_other_status_count('C')
+        c_status_total = sum(get_filtered_status_count(status_group, 'C') for status_group in status_order) + get_other_status_count('C')
         current_row = add_total_row(current_row, c_status_total, 'C Status Total')
         
         # Note: fill_empty_cells_with_zeros is now called once at the end of all processing
