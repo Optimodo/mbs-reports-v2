@@ -1,5 +1,6 @@
 """Progression report generation module."""
 
+import warnings
 import os
 import pandas as pd
 from openpyxl import load_workbook, Workbook
@@ -7,6 +8,9 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.worksheet.page import PageMargins
 
 from styles.formatting import PROGRESSION_STATUS_ORDER
+
+# Suppress openpyxl warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 
 def detect_new_revision_types(sheet, new_revisions, revision_type):

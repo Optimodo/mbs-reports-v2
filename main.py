@@ -4,10 +4,15 @@ This module handles the high-level workflow and menu interface for processing
 document listings and generating reports.
 """
 
+import warnings
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
 from config import load_project_config
+
+# Suppress openpyxl warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 # Import from new modular structure
 from processors import load_document_listing
@@ -59,14 +64,16 @@ def get_project_selection():
     print("2. New Malden (NM)")
     print("3. Greenwich Peninsula (GP)")
     print("4. Holloway Park (HP)")
+    print("5. West Cromwell Road (WCR)")
     
-    choice = input("\nSelect project (1-4): ").strip()
+    choice = input("\nSelect project (1-5): ").strip()
     
     project_map = {
         '1': ('OvalBlockB', 'OVB'),
         '2': ('NewMalden', 'NM'),
         '3': ('GreenwichPeninsula', 'GP'),
-        '4': ('HollowayPark', 'HP')
+        '4': ('HollowayPark', 'HP'),
+        '5': ('WestCromwellRoad', 'WCR')
     }
     
     return project_map.get(choice, ('NewMalden', 'NM'))
@@ -290,7 +297,8 @@ def process_single_project(project_name, project_code):
         'OVB': input_dir / 'OVB',
         'NM': input_dir / 'NM',
         'GP': input_dir / 'GP',
-        'HP': input_dir / 'HP'
+        'HP': input_dir / 'HP',
+        'WCR': input_dir / 'WCR'
     }
     
     # Load processed files record
@@ -323,7 +331,8 @@ def process_all_projects():
         'OVB': input_dir / 'OVB',
         'NM': input_dir / 'NM',
         'GP': input_dir / 'GP',
-        'HP': input_dir / 'HP'
+        'HP': input_dir / 'HP',
+        'WCR': input_dir / 'WCR'
     }
     
     # Project name mapping
@@ -331,7 +340,8 @@ def process_all_projects():
         'OVB': 'OvalBlockB',
         'NM': 'NewMalden',
         'GP': 'GreenwichPeninsula',
-        'HP': 'HollowayPark'
+        'HP': 'HollowayPark',
+        'WCR': 'WestCromwellRoad'
     }
     
     # Load processed files record

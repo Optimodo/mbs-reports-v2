@@ -1,7 +1,9 @@
 """Timestamp extraction utilities."""
 
 import pandas as pd
+import re
 from datetime import datetime
+from pathlib import Path
 
 
 def get_file_timestamp(file_path):
@@ -17,7 +19,7 @@ def get_file_timestamp(file_path):
         file_path_str = str(file_path).lower()
         
         if file_path_str.endswith('.csv'):
-            # For CSV files, get timestamp from 'Report Created' column
+            # For CSV files, try to get timestamp from 'Report Created' column first
             df = pd.read_csv(file_path, nrows=1)
             if 'Report Created' in df.columns and not df['Report Created'].isna().all():
                 timestamp_str = df['Report Created'].iloc[0]
@@ -33,6 +35,24 @@ def get_file_timestamp(file_path):
                     except Exception as e:
                         print(f"Warning: Could not parse CSV timestamp '{timestamp_str}': {str(e)}")
                         return None, None
+            
+            # If no 'Report Created' column, try to extract date from filename
+            # Format: "XX Document Listing DDMMYY.csv"
+            filename = Path(file_path).name
+            # Look for 6-digit date pattern (DDMMYY)
+            date_match = re.search(r'(\d{6})(?:\.csv)?$', filename)
+            if date_match:
+                date_str = date_match.group(1)
+                try:
+                    # Parse DDMMYY format
+                    date_obj = datetime.strptime(date_str, '%d%m%y')
+                    # Default time to 12:00 for filename-based timestamps
+                    return date_obj.strftime('%d-%b-%Y'), '12:00'
+                except ValueError as e:
+                    print(f"Warning: Could not parse date from filename '{filename}': {str(e)}")
+                    return None, None
+            
+            print(f"Warning: Could not extract timestamp from CSV file or filename: {filename}")
             return None, None
         else:
             # Excel file - Read just cell B4 (which is merged from B to I)

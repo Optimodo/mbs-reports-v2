@@ -1,8 +1,13 @@
 """Data loading and processing for Excel and CSV files."""
 
+import warnings
 import pandas as pd
 from pathlib import Path
 from utils.data_cleaning import clean_revision
+
+# Suppress warnings
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 
 def process_csv_file(file_path, config):

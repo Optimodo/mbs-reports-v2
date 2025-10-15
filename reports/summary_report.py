@@ -1,5 +1,6 @@
 """Summary report generation module."""
 
+import warnings
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,9 @@ from styles.formatting import (
     STATUS_STYLES,
     apply_status_style
 )
+
+# Suppress openpyxl warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 
 def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, config, max_retries=3):

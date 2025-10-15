@@ -1,7 +1,11 @@
 """Document counting and aggregation logic."""
 
+import warnings
 import pandas as pd
 from utils.data_cleaning import clean_revision
+
+# Suppress warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 
 def get_counts(df, config=None):

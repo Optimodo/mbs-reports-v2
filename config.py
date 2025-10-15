@@ -20,7 +20,8 @@ PROJECT_CODES = {
     'H8499': 'NewMalden',
     'JXXXZ18': 'GreenwichPeninsula',
     'R459': 'OvalBlockB',
-    'HPA': 'HollowayPark'  # Holloway Park project code
+    'HPA': 'HollowayPark',  # Holloway Park project code
+    'WCR': 'WestCromwellRoad'  # West Cromwell Road project code
 }
 
 def detect_project_from_file(file_path):

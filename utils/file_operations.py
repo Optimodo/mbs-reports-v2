@@ -41,11 +41,13 @@ def get_project_files_with_timestamps(project_input_dir):
     """
     files_with_timestamps = []
     
-    # Check if this is Holloway Park project (by folder name)
-    is_holloway_park = 'HP' in str(project_input_dir) or 'holloway' in str(project_input_dir).lower()
+    # Check if this project uses CSV files (by folder name)
+    project_dir_str = str(project_input_dir).lower()
+    is_csv_project = ('hp' in project_dir_str or 'holloway' in project_dir_str or 
+                     'wcr' in project_dir_str or 'cromwell' in project_dir_str)
     
     # Get file patterns to search for
-    if is_holloway_park:
+    if is_csv_project:
         file_patterns = ["*.xlsx", "*.csv"]
     else:
         file_patterns = ["*.xlsx"]
