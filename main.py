@@ -8,6 +8,8 @@ import warnings
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
+from openpyxl import load_workbook
+from openpyxl.styles import Font, PatternFill
 from config import load_project_config
 
 # Suppress openpyxl warnings
@@ -20,6 +22,7 @@ from analyzers import get_counts
 from reports import (
     save_excel_with_retry,
     generate_progression_report,
+    generate_condensed_progression_report,
     fill_empty_cells_with_zeros_in_file
 )
 from utils import (
@@ -49,12 +52,13 @@ def show_menu():
     print("4. Detect files only")
     print("5. Generate standalone report")
     print("6. Process from DATABASE (recommended)")
-    print("7. Regenerate all reports from scratch (legacy)")
-    print("8. Exit")
+    print("7. Generate CONDENSED progression reports (monthly + 4 weeks)")
+    print("8. Regenerate all reports from scratch (legacy)")
+    print("9. Exit")
     print("="*60)
-    print("\n💡 TIP: Use option 6 for database-powered processing")
+    print("\n💡 TIP: Use option 6 for full reports, option 7 for condensed")
     
-    choice = input("\nEnter your choice (1-8): ").strip()
+    choice = input("\nEnter your choice (1-9): ").strip()
     return choice
 
 
@@ -378,6 +382,126 @@ def process_all_projects():
     print(f"{'='*60}")
 
 
+def generate_condensed_progression_reports(num_recent_weeks=4):
+    """Generate condensed progression reports (monthly + last N weeks) from database.
+    
+    This function:
+    1. Queries database for monthly summaries (last snapshot per month)
+    2. Queries database for last N weeks
+    3. Generates condensed progression reports with highlighted monthly columns
+    
+    Args:
+        num_recent_weeks: Number of recent weeks to show in detail (default: 4)
+    """
+    print("\n" + "="*60)
+    print("GENERATING CONDENSED PROGRESSION REPORTS")
+    print("="*60)
+    print(f"\nFormat: Monthly summaries + Last {num_recent_weeks} weeks")
+    print("Monthly columns will be highlighted in blue")
+    
+    # Setup directories
+    output_dir = Path('output')
+    output_dir.mkdir(exist_ok=True)
+    
+    with DocumentDatabase() as db:
+        # Get all projects from database
+        db_projects = db.get_all_projects()
+        
+        if not db_projects:
+            print("✗ No data in database. Please run db_manager.py --import-all first")
+            return
+        
+        print(f"\nFound {len(db_projects)} projects in database\n")
+        
+        # Process each project
+        for project_name in db_projects:
+            print(f"{'='*60}")
+            print(f"Processing: {project_name}")
+            print(f"{'='*60}")
+            
+            try:
+                # Load project configuration
+                config = load_project_config(project_name)
+                
+                # Get condensed summary from database
+                condensed_df = db.get_condensed_summary(project_name, num_recent_weeks)
+                
+                if condensed_df.empty:
+                    print(f"✗ No data for {project_name}")
+                    continue
+                
+                # Count monthly vs weekly snapshots
+                monthly_count = len(condensed_df[condensed_df['_is_monthly'] == True])
+                weekly_count = len(condensed_df[condensed_df['_is_monthly'] == False])
+                
+                print(f"Monthly summaries: {monthly_count}")
+                print(f"Recent weeks: {weekly_count}")
+                print(f"Total columns: {monthly_count + weekly_count}")
+                
+                # Generate condensed progression report
+                project_slug = slugify(project_name)
+                condensed_output = output_dir / f"{project_slug}_progression_condensed.xlsx"
+                
+                print(f"\nGenerating condensed progression report...")
+                
+                # Delete existing file to start fresh
+                if condensed_output.exists():
+                    condensed_output.unlink()
+                
+                # Process each snapshot with its specific document data
+                for idx, row in condensed_df.iterrows():
+                    # Get the actual document data for this snapshot
+                    snapshot_date = row.get('_snapshot_date')
+                    snapshot_time = row.get('_snapshot_time')
+                    
+                    if snapshot_date and snapshot_time:
+                        # Query database for this specific snapshot's documents
+                        snapshot_docs = db.get_documents_for_snapshot(project_name, snapshot_date, snapshot_time)
+                    else:
+                        # Fallback to latest if metadata missing
+                        snapshot_docs = db.get_latest_documents(project_name)
+                    
+                    # Create single-row summary for this snapshot
+                    snapshot_summary = pd.DataFrame([row])
+                    
+                    # Check if this is a monthly or weekly column
+                    is_monthly = row.get('_is_monthly', False)
+                    
+                    # Generate progression report (adds one column)
+                    if generate_progression_report(snapshot_summary, condensed_output, config, snapshot_docs):
+                        # Apply special formatting to monthly columns
+                        if is_monthly:
+                            try:
+                                book = load_workbook(condensed_output)
+                                if 'Progression' in book.sheetnames:
+                                    sheet = book['Progression']
+                                    last_col = sheet.max_column
+                                    date_cell = sheet.cell(row=1, column=last_col)
+                                    date_cell.font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+                                    date_cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+                                    book.save(condensed_output)
+                            except Exception as e:
+                                print(f"  Warning: Could not apply monthly formatting: {e}")
+                        
+                        print(f"  ✓ Added column: {row['Date']} {row['Time']}")
+                    else:
+                        print(f"  ✗ Failed: {row['Date']} {row['Time']}")
+                
+                # Fill empty cells
+                fill_empty_cells_with_zeros_in_file(str(condensed_output))
+                print(f"✓ Condensed progression saved: {condensed_output}")
+                
+            except Exception as e:
+                print(f"✗ Error processing {project_name}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                continue
+    
+    print(f"\n{'='*60}")
+    print("Condensed progression reports complete!")
+    print(f"{'='*60}")
+
+
 def process_projects_from_database():
     """Process all projects using database as data source.
     
@@ -447,7 +571,7 @@ def process_projects_from_database():
                 
                 print(f"Found {len(summary_df)} snapshots")
                 
-                # Get latest documents
+                # Get latest documents (for summary report only)
                 latest_data_df = db.get_latest_documents(project_name)
                 
                 # Project output files
@@ -467,11 +591,22 @@ def process_projects_from_database():
                     snapshot_date = row['Date']
                     snapshot_time = row['Time']
                     
+                    # Convert date back to YYYY-MM-DD format for database query
+                    try:
+                        date_obj = datetime.strptime(snapshot_date, '%d-%b-%Y')
+                        db_date = date_obj.strftime('%Y-%m-%d')
+                    except:
+                        print(f"  ✗ Could not parse date: {snapshot_date}")
+                        continue
+                    
+                    # Get document data for THIS specific snapshot
+                    snapshot_docs = db.get_documents_for_snapshot(project_name, db_date, snapshot_time)
+                    
                     # Create single-row summary for this snapshot
                     snapshot_summary = pd.DataFrame([row])
                     
                     # Generate progression report (adds one column per snapshot)
-                    if generate_progression_report(snapshot_summary, progression_output, config, latest_data_df):
+                    if generate_progression_report(snapshot_summary, progression_output, config, snapshot_docs):
                         print(f"  ✓ Added column: {snapshot_date} {snapshot_time}")
                     else:
                         print(f"  ✗ Failed to add column: {snapshot_date} {snapshot_time}")
@@ -823,11 +958,16 @@ def main():
             input("\nPress Enter to continue...")
             
         elif choice == '7':
+            # Generate condensed progression reports
+            generate_condensed_progression_reports(num_recent_weeks=4)
+            input("\nPress Enter to continue...")
+            
+        elif choice == '8':
             # Regenerate all reports from scratch (legacy)
             regenerate_all_reports()
             input("\nPress Enter to continue...")
             
-        elif choice == '8':
+        elif choice == '9':
             # Exit
             print("\nGoodbye!")
             break

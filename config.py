@@ -113,7 +113,9 @@ def load_project_config(project_name, input_file=None):
         'CERTIFICATE_SETTINGS': module.CERTIFICATE_SETTINGS if hasattr(module, 'CERTIFICATE_SETTINGS') else DEFAULT_SETTINGS['CERTIFICATE_SETTINGS'],
         'PROJECT_TITLE': getattr(module, 'PROJECT_TITLE', project_name),
         'MBS_FILTER': module.MBS_FILTER if hasattr(module, 'MBS_FILTER') else None,
-        'COLUMN_MAPPINGS': module.COLUMN_MAPPINGS if hasattr(module, 'COLUMN_MAPPINGS') else None
+        'COLUMN_MAPPINGS': module.COLUMN_MAPPINGS if hasattr(module, 'COLUMN_MAPPINGS') else None,
+        'STATUS_MAPPINGS': module.STATUS_MAPPINGS if hasattr(module, 'STATUS_MAPPINGS') else None,
+        'STATUS_DISPLAY_ORDER': module.STATUS_DISPLAY_ORDER if hasattr(module, 'STATUS_DISPLAY_ORDER') else None
     }
     return settings
 

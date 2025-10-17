@@ -18,6 +18,67 @@ from utils.status_mapping import (
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 
+def generate_condensed_progression_report(summary_df, output_file, config, latest_data_df=None):
+    """Generate condensed progression report with monthly summaries + last 4 weeks.
+    
+    This is a wrapper that processes the condensed summary DataFrame and generates
+    the progression report with special formatting for monthly vs weekly columns.
+    
+    Args:
+        summary_df: DataFrame with condensed summary (monthly + last 4 weeks)
+                   Must have '_is_monthly' flag column
+        output_file: Path to output Excel file
+        config: Project configuration dictionary
+        latest_data_df: DataFrame with latest document data
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if summary_df.empty:
+        print("No data to generate condensed progression report")
+        return False
+    
+    # Delete existing file to start fresh
+    if os.path.exists(output_file):
+        try:
+            os.remove(output_file)
+        except Exception as e:
+            print(f"Warning: Could not delete existing file: {e}")
+    
+    # Process each row (snapshot) and build the progression report
+    for idx, row in summary_df.iterrows():
+        # Create single-row DataFrame for this snapshot
+        snapshot_summary = pd.DataFrame([row])
+        
+        # Check if this is a monthly or weekly column
+        is_monthly = row.get('_is_monthly', False)
+        
+        # Generate progression report (adds one column)
+        success = generate_progression_report(snapshot_summary, output_file, config, latest_data_df)
+        
+        if success and is_monthly:
+            # Apply special formatting to monthly columns
+            try:
+                book = load_workbook(output_file)
+                if 'Progression' in book.sheetnames:
+                    sheet = book['Progression']
+                    
+                    # Find the column we just added (last data column)
+                    # Column 1 is row labels, so data starts at column 2
+                    last_col = sheet.max_column
+                    
+                    # Make the date header bold and highlighted for monthly columns
+                    date_cell = sheet.cell(row=1, column=last_col)
+                    date_cell.font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+                    date_cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+                    
+                    book.save(output_file)
+            except Exception as e:
+                print(f"Warning: Could not apply monthly column formatting: {e}")
+    
+    return True
+
+
 def detect_new_revision_types(sheet, new_revisions, revision_type):
     """Detect if there are new revision types that don't exist in the current progression report.
     

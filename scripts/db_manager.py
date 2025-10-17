@@ -67,18 +67,20 @@ def initialize_database(db_path='data/documents.db'):
     print("✓ Database initialized successfully")
 
 
-def rebuild_database(db_path='data/documents.db'):
+def rebuild_database(db_path='data/documents.db', force=False):
     """Wipe and rebuild the entire database.
     
     Args:
         db_path: Path to database file
+        force: Skip confirmation prompt
     """
-    print("WARNING: This will delete ALL data in the database!")
-    response = input("Are you sure you want to continue? (yes/no): ")
-    
-    if response.lower() != 'yes':
-        print("Rebuild cancelled")
-        return
+    if not force:
+        print("WARNING: This will delete ALL data in the database!")
+        response = input("Are you sure you want to continue? (yes/no): ")
+        
+        if response.lower() != 'yes':
+            print("Rebuild cancelled")
+            return
     
     print("\nRebuilding database...")
     with DocumentDatabase(db_path) as db:
@@ -152,11 +154,11 @@ def import_project_files(project_code, project_name, force=False, db_path='data/
                 config = load_project_config(project_name, file_path)
                 
                 # Load document listing
-                print(f"  → Processing {file_path.name} ({date_str} {time_str})...")
+                print(f"  -> Processing {file_path.name} ({date_str} {time_str})...")
                 df = load_document_listing(file_path, config)
                 
                 if df is None or df.empty:
-                    print(f"  ✗ No data in {file_path.name}")
+                    print(f"  X No data in {file_path.name}")
                     continue
                 
                 # Convert date format for database (YYYY-MM-DD)
@@ -174,14 +176,14 @@ def import_project_files(project_code, project_name, force=False, db_path='data/
                 db.mark_file_processed(project_name, file_path, file_path.name, 
                                        snapshot_date, snapshot_time, len(df))
                 
-                print(f"  ✓ Imported {inserted} documents from {file_path.name}")
+                print(f"  OK Imported {inserted} documents from {file_path.name}")
                 files_imported += 1
                 
             except Exception as e:
-                print(f"  ✗ Error processing {file_path.name}: {str(e)}")
+                print(f"  X Error processing {file_path.name}: {str(e)}")
                 continue
     
-    print(f"✓ Imported {files_imported} files for {project_name}")
+    print(f"OK Imported {files_imported} files for {project_name}")
     return files_imported
 
 
@@ -200,19 +202,20 @@ def import_all_projects(force=False, db_path='data/documents.db'):
             imported = import_project_files(project_code, project_name, force, db_path)
             total_imported += imported
         except Exception as e:
-            print(f"✗ Error importing {project_name}: {str(e)}")
+            print(f"X Error importing {project_name}: {str(e)}")
             continue
     
-    print(f"\n✓ Total files imported: {total_imported}")
+    print(f"\nOK Total files imported: {total_imported}")
 
 
-def update_database_with_new_files(db_path='data/documents.db'):
+def update_database_with_new_files(db_path='data/documents.db', force=False):
     """Update database with any new files that haven't been processed yet.
     
     This is the function that should be called by the main script weekly.
     
     Args:
         db_path: Path to database file
+        force: If True, re-import all files even if already processed
         
     Returns:
         dict: Statistics about what was updated
@@ -227,7 +230,7 @@ def update_database_with_new_files(db_path='data/documents.db'):
     
     for project_code, project_name in PROJECT_NAMES.items():
         try:
-            files_imported = import_project_files(project_code, project_name, force=False, db_path=db_path)
+            files_imported = import_project_files(project_code, project_name, force=force, db_path=db_path)
             if files_imported > 0:
                 stats['projects_updated'] += 1
                 stats['files_imported'] += files_imported
@@ -287,6 +290,8 @@ def main():
                        help='Initialize database schema')
     parser.add_argument('--rebuild', action='store_true',
                        help='Wipe and rebuild entire database')
+    parser.add_argument('--rebuild-and-import', action='store_true',
+                       help='Rebuild database and automatically import all projects')
     parser.add_argument('--import-all', action='store_true',
                        help='Import all files from all projects')
     parser.add_argument('--import-project', type=str,
@@ -314,6 +319,13 @@ def main():
         if args.rebuild:
             rebuild_database(args.db_path)
         
+        if args.rebuild_and_import:
+            print("Rebuilding database and importing all projects...")
+            rebuild_database(args.db_path, force=True)
+            print("Database rebuilt successfully. Now importing all projects...")
+            import_all_projects(True, args.db_path)  # Force import after rebuild
+            print("Rebuild and import completed successfully!")
+        
         if args.import_all:
             import_all_projects(args.force, args.db_path)
         
@@ -336,11 +348,140 @@ def main():
     except KeyboardInterrupt:
         print("\n\nOperation cancelled by user")
     except Exception as e:
-        print(f"\n✗ Error: {str(e)}")
+        print(f"\nX Error: {str(e)}")
         import traceback
         traceback.print_exc()
 
 
+def show_interactive_menu():
+    """Display interactive console menu for database management."""
+    while True:
+        print("\n" + "="*60)
+        print("DATABASE MANAGER - MBS Reports v2")
+        print("="*60)
+        print("1. Initialize Database Schema")
+        print("2. Rebuild Database (Wipe & Recreate)")
+        print("3. Rebuild Database + Import All Projects")
+        print("4. Import All Projects")
+        print("5. Import All Projects (Force Overwrite)")
+        print("6. Update Database with New Files")
+        print("7. Show Database Statistics")
+        print("8. Exit")
+        print("="*60)
+        
+        try:
+            choice = input("Enter your choice (1-8): ").strip()
+            
+            if choice == '1':
+                print("\nInitializing database schema...")
+                init_database()
+                input("\nPress Enter to continue...")
+                
+            elif choice == '2':
+                print("\nWARNING: This will wipe the entire database!")
+                confirm = input("Are you sure? Type 'yes' to continue: ").strip().lower()
+                if confirm == 'yes':
+                    print("\nRebuilding database...")
+                    rebuild_database_menu(force=True)
+                    print("Database rebuilt successfully!")
+                else:
+                    print("Operation cancelled.")
+                input("\nPress Enter to continue...")
+                
+            elif choice == '3':
+                print("\nWARNING: This will wipe the entire database and re-import all projects!")
+                confirm = input("Are you sure? Type 'yes' to continue: ").strip().lower()
+                if confirm == 'yes':
+                    print("\nRebuilding database and importing all projects...")
+                    rebuild_database_menu(force=True)
+                    import_all_projects_menu(force=True)
+                    print("Database rebuilt and all projects imported successfully!")
+                else:
+                    print("Operation cancelled.")
+                input("\nPress Enter to continue...")
+                
+            elif choice == '4':
+                print("\nImporting all projects...")
+                import_all_projects_menu(force=False)
+                input("\nPress Enter to continue...")
+                
+            elif choice == '5':
+                print("\nImporting all projects (force overwrite)...")
+                import_all_projects_menu(force=True)
+                input("\nPress Enter to continue...")
+                
+            elif choice == '6':
+                print("\nUpdating database with new files...")
+                update_database()
+                input("\nPress Enter to continue...")
+                
+            elif choice == '7':
+                print("\nDatabase Statistics:")
+                show_stats()
+                input("\nPress Enter to continue...")
+                
+            elif choice == '8':
+                print("\nGoodbye!")
+                break
+                
+            else:
+                print("\nInvalid choice. Please enter a number between 1-8.")
+                input("Press Enter to continue...")
+                
+        except KeyboardInterrupt:
+            print("\n\nOperation cancelled by user.")
+            break
+        except Exception as e:
+            print(f"\nError: {str(e)}")
+            input("Press Enter to continue...")
+
+
+def init_database():
+    """Initialize the database schema."""
+    try:
+        initialize_database('data/documents.db')
+    except Exception as e:
+        print(f"X Error initializing database: {str(e)}")
+
+
+def rebuild_database_menu(force=False):
+    """Rebuild the database (wipe and recreate)."""
+    try:
+        rebuild_database('data/documents.db', force)
+    except Exception as e:
+        print(f"X Error rebuilding database: {str(e)}")
+
+
+def import_all_projects_menu(force=False):
+    """Import all projects into the database."""
+    try:
+        import_all_projects(force, 'data/documents.db')
+    except Exception as e:
+        print(f"X Error importing projects: {str(e)}")
+
+
+def update_database():
+    """Update database with new files."""
+    try:
+        update_database_with_new_files('data/documents.db', force=False)
+    except Exception as e:
+        print(f"X Error updating database: {str(e)}")
+
+
+def show_stats():
+    """Show database statistics."""
+    try:
+        show_database_stats('data/documents.db')
+    except Exception as e:
+        print(f"X Error getting database stats: {str(e)}")
+
+
 if __name__ == '__main__':
-    main()
+    # Check if any command line arguments were provided
+    if len(sys.argv) > 1:
+        # Run with command line arguments (existing functionality)
+        main()
+    else:
+        # Run interactive menu
+        show_interactive_menu()
 

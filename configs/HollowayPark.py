@@ -71,21 +71,21 @@ STATUS_MAPPINGS = {
         ],
         'description': 'Design Status C'
     },
-    'Preliminary': {
-        'display_name': 'Preliminary',
-        'color': '87CEEB',  # Light blue
+    'IFC-pending': {
+        'display_name': 'IFC-pending',
+        'color': 'FFFFFF',  # White
         'statuses': [
-            'Preliminary'
+            'IFC-pending'  # From map_holloway_park_status when Status='IFC-pending'
         ],
-        'description': 'Preliminary documents'
+        'description': 'IFC-pending documents awaiting approval'
     },
     'Other': {
         'display_name': 'Other',
-        'color': 'D3D3D3',  # Light gray
+        'color': 'FFFFFF',  # White
         'statuses': [
-            'Other'  # All unmapped statuses (Information, Tender, IFC-pending, etc.)
+            'Other'  # Information, Tender, Contract, As-Built, Record, Planning, Preliminary, Withdrawn, etc.
         ],
-        'description': 'Information, Tender, IFC-pending, Contract, As-Built, Record, Planning, etc.'
+        'description': 'Information, Tender, Contract, As-Built, Record, Planning, Preliminary, Withdrawn etc.'
     }
 }
 
@@ -94,7 +94,7 @@ STATUS_DISPLAY_ORDER = [
     'Status A',
     'Status B',
     'Status C',
-    'Preliminary',
+    'IFC-pending',
     'Other'
 ]
 
@@ -109,13 +109,20 @@ def map_holloway_park_status(row):
     Custom status mapping for Holloway Park project.
     Checks both 'Status' (column F) and 'Design Status' (column I) columns.
     
+    Priority Logic:
+    1. Design Status takes precedence if present (B or C)
+    2. If no Design Status, check Status column:
+       - 'Construction' → 'Status A'
+       - 'IFC-pending' → 'IFC-pending' (its own category)
+       - 'Preliminary' → 'Other' (bundled with other statuses)
+       - Everything else → 'Other'
+    
     Returns:
-        - 'Status A' if Status is 'Construction' and Design Status is empty
-        - 'Status B' if Design Status is 'B'
-        - 'Status C' if Design Status is 'C'
-        - 'Preliminary' if Status is 'Preliminary' and Design Status is empty
-        - 'Other' if Status is 'IFC-pending' and Design Status is empty
-        - 'Other' for any other combinations
+        - 'Status B' if Design Status is 'B' (regardless of Status column)
+        - 'Status C' if Design Status is 'C' (regardless of Status column)
+        - 'Status A' if Status is 'Construction' and no Design Status
+        - 'IFC-pending' if Status is 'IFC-pending' and no Design Status
+        - 'Other' for all other combinations (Information, Tender, Preliminary, etc.)
     """
     # Get values from both status columns
     status_col_f = row.get('Status', '') if pd.notna(row.get('Status', '')) else ''
@@ -139,22 +146,23 @@ def map_holloway_park_status(row):
     if status_col_f:
         if status_col_f.lower() == 'construction':
             return 'Status A'
-        elif status_col_f.lower() == 'preliminary':
-            return 'Preliminary'
         elif status_col_f.lower() == 'ifc-pending':
-            return 'Other'
+            return 'IFC-pending'  # Now its own category
+        elif status_col_f.lower() == 'preliminary':
+            return 'Other'  # Moved to Other category
         else:
-            # Any other status value
+            # Any other status value (Information, Tender, Contract, etc.)
             return 'Other'
     
     # If both columns are empty
     return 'Other'
 
-# Status mappings for Holloway Park (legacy, kept for compatibility)
-STATUS_MAPPINGS = {
+# Legacy status mappings (kept for compatibility - not used by new system)
+# Note: The new system uses the STATUS_MAPPINGS dictionary above with the custom mapping function
+LEGACY_STATUS_MAPPINGS = {
     'Construction': 'Status A',
-    'Preliminary': 'Preliminary',
-    'IFC-pending': 'Other',
+    'Preliminary': 'Other',  # Now bundled with Other
+    'IFC-pending': 'IFC-pending',  # Now its own category
     'Information': 'Other', 
     'Tender': 'Other',
     'Contract': 'Other',

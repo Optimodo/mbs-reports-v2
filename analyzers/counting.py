@@ -73,23 +73,73 @@ def get_counts(df, config=None):
             for rev, count in rev_counts.items():
                 counts[f'Rev_{rev}'] = count
         
-        # Count statuses
-        if cert_enabled and not cert_data.empty:
-            # Count non-certificate statuses only
-            non_cert_status_counts = non_cert_data['Status'].value_counts()
-            for status, count in non_cert_status_counts.items():
-                counts[f'Status_{status}'] = count
+        # Count statuses - use STATUS_MAPPINGS if available to group statuses
+        if config and 'STATUS_MAPPINGS' in config:
+            # Use project-specific status mappings
+            status_mappings = config['STATUS_MAPPINGS']
             
-            # Count certificate statuses with suffix (separate from regular statuses)
-            cert_status_counts = cert_data['Status'].value_counts()
-            cert_suffix = cert_config.get('status_suffix', ' (Certificates)')
-            for status, count in cert_status_counts.items():
-                counts[f'Status_{status}{cert_suffix}'] = count
+            # Initialize category counts
+            grouped_status_counts = {}
+            for category in status_mappings.keys():
+                grouped_status_counts[category] = 0
+            
+            # Handle certificates separately if enabled
+            if cert_enabled and not cert_data.empty:
+                # Count non-certificate statuses
+                for status_value in non_cert_data['Status']:
+                    # Find which category this status belongs to
+                    categorized = False
+                    for category, mapping in status_mappings.items():
+                        if status_value in mapping.get('statuses', []):
+                            grouped_status_counts[category] += 1
+                            categorized = True
+                            break
+                    
+                    # If not categorized and 'Other' exists, add to Other
+                    if not categorized and 'Other' in grouped_status_counts:
+                        grouped_status_counts['Other'] += 1
+                
+                # Count certificate statuses with suffix
+                cert_suffix = cert_config.get('status_suffix', ' (Certificates)')
+                for status_value in cert_data['Status']:
+                    counts[f'Status_{status_value}{cert_suffix}'] = counts.get(f'Status_{status_value}{cert_suffix}', 0) + 1
+            else:
+                # Count all statuses with grouping
+                for status_value in df['Status']:
+                    # Find which category this status belongs to
+                    categorized = False
+                    for category, mapping in status_mappings.items():
+                        if status_value in mapping.get('statuses', []):
+                            grouped_status_counts[category] += 1
+                            categorized = True
+                            break
+                    
+                    # If not categorized and 'Other' exists, add to Other
+                    if not categorized and 'Other' in grouped_status_counts:
+                        grouped_status_counts['Other'] += 1
+            
+            # Add grouped counts to main counts dictionary
+            for category, count in grouped_status_counts.items():
+                if count > 0:  # Only add non-zero counts
+                    counts[f'Status_{category}'] = count
         else:
-            # Regular status counting
-            status_counts = df['Status'].value_counts()
-            for status, count in status_counts.items():
-                counts[f'Status_{status}'] = count
+            # Fallback: Regular status counting without grouping (legacy behavior)
+            if cert_enabled and not cert_data.empty:
+                # Count non-certificate statuses only
+                non_cert_status_counts = non_cert_data['Status'].value_counts()
+                for status, count in non_cert_status_counts.items():
+                    counts[f'Status_{status}'] = count
+                
+                # Count certificate statuses with suffix (separate from regular statuses)
+                cert_status_counts = cert_data['Status'].value_counts()
+                cert_suffix = cert_config.get('status_suffix', ' (Certificates)')
+                for status, count in cert_status_counts.items():
+                    counts[f'Status_{status}{cert_suffix}'] = count
+            else:
+                # Regular status counting
+                status_counts = df['Status'].value_counts()
+                for status, count in status_counts.items():
+                    counts[f'Status_{status}'] = count
         
         # Count file types if the column exists
         if 'OVL - File Type' in df.columns:

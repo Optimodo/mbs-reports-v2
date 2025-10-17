@@ -182,16 +182,28 @@ STATUS_STYLES = {
 }
 
 
-def apply_status_style(cell, status_name):
+def apply_status_style(cell, status_name, config=None):
     """Apply conditional formatting based on status name.
     
     Args:
         cell: openpyxl cell object
         status_name: Status string to match against
+        config: Project configuration dictionary (optional)
         
     Returns:
         dict: The style configuration applied
     """
+    # Try to use config-based styling first
+    if config and 'STATUS_MAPPINGS' in config:
+        status_mappings = config['STATUS_MAPPINGS']
+        if status_name in status_mappings:
+            color = status_mappings[status_name].get('color')
+            if color:
+                cell.font = OVERALL_SUMMARY_STYLES['data_cell']['font']
+                cell.fill = PatternFill(start_color=color, end_color=color, fill_type='solid')
+                return OVERALL_SUMMARY_STYLES['data_cell']
+    
+    # Fallback to old hardcoded styling
     for style_config in STATUS_STYLES.values():
         if any(term == status_name for term in style_config['search_terms']):
             cell.font = style_config['style']['font']

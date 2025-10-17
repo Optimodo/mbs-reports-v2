@@ -29,6 +29,40 @@ from utils.status_mapping import (
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 
+def get_chart_safe_color(config_color, category):
+    """Convert config colors to chart-safe colors.
+    
+    Ensures that white/very light colors are converted to visible colors for charts.
+    
+    Args:
+        config_color: Color from config (hex string)
+        category: Status category name for fallback mapping
+        
+    Returns:
+        str: Chart-safe hex color
+    """
+    # Define chart-safe colors for common white/light statuses
+    chart_safe_mapping = {
+        'Other': 'C0C0C0',        # Light gray
+        'Information': 'D3D3D3',   # Light gray
+        'Review': 'E6E6FA',       # Lavender
+        'IFC-pending': 'F0E68C',  # Khaki
+        'Under Review': 'DDA0DD', # Plum
+        'Shared': '98FB98',       # Pale green
+        'Published': '87CEEB',    # Sky blue
+    }
+    
+    # Check if the color is too light (white or very light colors)
+    light_colors = ['FFFFFF', 'FFFFF0', 'FFFACD', 'FFF8DC', 'F5F5DC', 'FDF5E6']
+    
+    if config_color.upper() in light_colors:
+        # Use category-specific fallback or generic light gray
+        return chart_safe_mapping.get(category, 'C0C0C0')
+    else:
+        # Use the original color if it's dark enough
+        return config_color
+
+
 def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, config, max_retries=3):
     """Try to save the Excel file with retries.
     
@@ -228,8 +262,11 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                         # Count statuses for all documents of this revision
                         rev_data = latest_data[latest_data['Rev'] == rev_name]
                     
-                    for status, status_count in rev_data['Status'].value_counts().items():
-                        status_counts[status] = status_counts.get(status, 0) + status_count
+                    # Use get_grouped_status_counts to properly group raw status values
+                    if not rev_data.empty:
+                        grouped_counts = get_grouped_status_counts(rev_data['Status'], config)
+                        for status, status_count in grouped_counts.items():
+                            status_counts[status] = status_counts.get(status, 0) + status_count
                 
                 # Add revision data
                 row = start_row + 2
@@ -244,18 +281,20 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                     # Always use the count from the summary data (which already has certificates separated)
                     count = latest_row.get(rev_col, 0)
                     
-                    # Add revision name and count
-                    overall_summary[f'A{row}'] = rev_name
-                    overall_summary[f'B{row}'] = count
-                    overall_summary[f'A{row}'].font = OVERALL_SUMMARY_STYLES['data_cell']['font']
-                    overall_summary[f'A{row}'].alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
-                    overall_summary[f'A{row}'].fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
-                    overall_summary[f'A{row}'].border = OVERALL_SUMMARY_STYLES['border']
-                    overall_summary[f'B{row}'].font = OVERALL_SUMMARY_STYLES['data_cell']['font']
-                    overall_summary[f'B{row}'].alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
-                    overall_summary[f'B{row}'].fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
-                    overall_summary[f'B{row}'].border = OVERALL_SUMMARY_STYLES['border']
-                    row += 1
+                    # Only add revision row if there are actually documents with this revision
+                    if count > 0:
+                        # Add revision name and count
+                        overall_summary[f'A{row}'] = rev_name
+                        overall_summary[f'B{row}'] = count
+                        overall_summary[f'A{row}'].font = OVERALL_SUMMARY_STYLES['data_cell']['font']
+                        overall_summary[f'A{row}'].alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                        overall_summary[f'A{row}'].fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
+                        overall_summary[f'A{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                        overall_summary[f'B{row}'].font = OVERALL_SUMMARY_STYLES['data_cell']['font']
+                        overall_summary[f'B{row}'].alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
+                        overall_summary[f'B{row}'].fill = OVERALL_SUMMARY_STYLES['data_cell']['fill']
+                        overall_summary[f'B{row}'].border = OVERALL_SUMMARY_STYLES['border']
+                        row += 1
                 
                 # Add certificate summary row if enabled and Rev_Certificates column exists
                 if cert_enabled and 'Rev_P_Certificates' in rev_columns:
@@ -291,88 +330,37 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                 status_row = start_row + 2
                 total_status_count = 0
                 
-                # Create ordered list with Published first, then others
+                # Create ordered list using project-specific categories
                 ordered_statuses = []
-                published_statuses = []
-                status_a_statuses = []
-                status_b_statuses = []
-                status_c_statuses = []
-                other_statuses = []
                 
-                # Also create certificate status lists if enabled
-                cert_published_statuses = []
-                cert_status_a_statuses = []
-                cert_status_b_statuses = []
-                cert_status_c_statuses = []
-                cert_other_statuses = []
+                # Certificate data removed - will be handled in separate certificate reports
                 
-                # Categorize statuses
+                # Database now contains grouped categories, so use them directly
+                # Skip certificate data (they have "(Certificates)" suffix)
+                filtered_status_counts = {}
                 for status, count in status_counts.items():
-                    categorized = False
-                    for style_name, style_config in STATUS_STYLES.items():
-                        if any(term == status for term in style_config['search_terms']):
-                            if style_name == 'PUBLISHED':
-                                published_statuses.append((status, count))
-                            elif style_name == 'STATUS A':
-                                status_a_statuses.append((status, count))
-                            elif style_name == 'STATUS B':
-                                status_b_statuses.append((status, count))
-                            elif style_name == 'STATUS C':
-                                status_c_statuses.append((status, count))
-                            else:
-                                other_statuses.append((status, count))
-                            categorized = True
-                            break
-                    if not categorized:
-                        other_statuses.append((status, count))
+                    if '(Certificates)' not in status:
+                        filtered_status_counts[status] = count
                 
-                # Categorize certificate statuses if enabled
-                if cert_enabled:
-                    # Get certificate status counts from Summary Data table (they have suffix)
-                    cert_suffix = cert_config.get('status_suffix', ' (Certificates)')
-                    for col_name in summary_data.columns:
-                        if col_name.startswith('Status_') and col_name.endswith(cert_suffix):
-                            # Extract the base status name and get the count
-                            status = col_name.replace('Status_', '').replace(cert_suffix, '')
-                            count = latest_row.get(col_name, 0)
-                            if count > 0:
-                                categorized = False
-                                for style_name, style_config in STATUS_STYLES.items():
-                                    if any(term == status for term in style_config['search_terms']):
-                                        if style_name == 'PUBLISHED':
-                                            cert_published_statuses.append((status, count))
-                                        elif style_name == 'STATUS A':
-                                            cert_status_a_statuses.append((status, count))
-                                        elif style_name == 'STATUS B':
-                                            cert_status_b_statuses.append((status, count))
-                                        elif style_name == 'STATUS C':
-                                            cert_status_c_statuses.append((status, count))
-                                        else:
-                                            cert_other_statuses.append((status, count))
-                                        categorized = True
-                                        break
-                                if not categorized:
-                                    cert_other_statuses.append((status, count))
-                
-                # Build ordered list: Published first, then A, B, C, Other
-                ordered_statuses = (sorted(published_statuses) + 
-                                  sorted(status_a_statuses) + 
-                                  sorted(status_b_statuses) + 
-                                  sorted(status_c_statuses) + 
-                                  sorted(other_statuses))
-                
-                # Add certificate statuses with suffix if enabled
-                if cert_enabled and (cert_published_statuses or cert_status_a_statuses or cert_status_b_statuses or cert_status_c_statuses or cert_other_statuses):
-                    cert_suffix = cert_config.get('status_suffix', ' (Certificates)')
-                    cert_ordered_statuses = (sorted(cert_published_statuses) + 
-                                           sorted(cert_status_a_statuses) + 
-                                           sorted(cert_status_b_statuses) + 
-                                           sorted(cert_status_c_statuses) + 
-                                           sorted(cert_other_statuses))
+                # Build ordered list using project-specific display order
+                if config and 'STATUS_DISPLAY_ORDER' in config:
+                    # Use project-specific display order
+                    display_order = config['STATUS_DISPLAY_ORDER']
                     
-                    # Add certificate statuses with suffix to the main list
-                    for status, count in cert_ordered_statuses:
-                        ordered_statuses.append((f"{status}{cert_suffix}", count))
+                    # Add statuses in the order defined by STATUS_DISPLAY_ORDER
+                    for category in display_order:
+                        if category in filtered_status_counts:
+                            ordered_statuses.append((category, filtered_status_counts[category]))
+                    
+                    # Add any remaining statuses that weren't in display order
+                    for status, count in filtered_status_counts.items():
+                        if status not in display_order:
+                            ordered_statuses.append((status, count))
+                else:
+                    # Fallback to alphabetical order if no display order defined
+                    ordered_statuses = sorted(filtered_status_counts.items())
+                
+                # Certificate data removed - will be handled in separate certificate reports
                 
                 for status, count in ordered_statuses:
                     total_status_count += count
@@ -382,7 +370,7 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                     status_cell.value = status
                     # Remove certificate suffix for style matching
                     status_for_style = status.replace(cert_config.get('status_suffix', ' (Certificates)'), '') if cert_enabled else status
-                    style = apply_status_style(status_cell, status_for_style)
+                    style = apply_status_style(status_cell, status_for_style, config)
                     status_cell.alignment = OVERALL_SUMMARY_STYLES['data_cell']['alignment']
                     status_cell.border = OVERALL_SUMMARY_STYLES['border']
                     
@@ -523,55 +511,11 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                 if rev_data.empty:
                     return None
                 
-                # Count statuses
-                status_counts = rev_data['Status'].value_counts()
+                # Use get_grouped_status_counts to properly group raw status values
+                chart_grouped_counts = get_grouped_status_counts(rev_data['Status'], config)
                 
-                if len(status_counts) == 0:
+                if len(chart_grouped_counts) == 0:
                     return None
-                
-                # Use config-based status grouping
-                chart_grouped_counts = get_grouped_status_counts(rev_data, config)
-                
-                # If no grouped counts or config not available, fall back to hardcoded logic
-                if not chart_grouped_counts:
-                    # Fallback: Group statuses according to STATUS_STYLES categories
-                    grouped_counts = {
-                        'Published': 0,
-                        'Status A': 0,
-                        'Status B': 0, 
-                        'Status C': 0,
-                        'Other': 0
-                    }
-                    
-                    for status, count in status_counts.items():
-                        categorized = False
-                        for style_name, style_config in STATUS_STYLES.items():
-                            if any(term == status for term in style_config['search_terms']):
-                                if style_name == 'PUBLISHED':
-                                    grouped_counts['Published'] += count
-                                if style_name == 'STATUS A':
-                                    grouped_counts['Status A'] += count
-                                elif style_name == 'STATUS B':
-                                    grouped_counts['Status B'] += count
-                                elif style_name == 'STATUS C':
-                                    grouped_counts['Status C'] += count
-                                else:
-                                    if style_name != 'PUBLISHED':
-                                        grouped_counts['Other'] += count
-                                categorized = True
-                                break
-                        
-                        if not categorized:
-                            grouped_counts['Other'] += count
-                    
-                    # For chart purposes, combine Published with Status A
-                    chart_grouped_counts = grouped_counts.copy()
-                    if chart_grouped_counts.get('Published', 0) > 0:
-                        chart_grouped_counts['Status A'] += chart_grouped_counts['Published']
-                        del chart_grouped_counts['Published']
-                    
-                    # Remove categories with zero counts
-                    chart_grouped_counts = {k: v for k, v in chart_grouped_counts.items() if v > 0}
                 
                 if not chart_grouped_counts:
                     return None
@@ -621,12 +565,14 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                 chart.legend.layout = None  # Let Excel auto-position the legend
                 
                 # Style the chart colors based on config or fallback to STATUS_STYLES
-                # Build colors dictionary from config
+                # Build colors dictionary from config with chart-optimized colors
                 colors = {}
                 if config and 'STATUS_MAPPINGS' in config:
-                    # Use config-based colors
+                    # Use config-based colors but ensure they're visible in charts
                     for category, mapping in config['STATUS_MAPPINGS'].items():
-                        colors[category] = mapping.get('color', 'FFFFFF')
+                        config_color = mapping.get('color', 'FFFFFF')
+                        # Convert white/very light colors to chart-visible colors
+                        colors[category] = get_chart_safe_color(config_color, category)
                 else:
                     # Fallback to hardcoded colors
                     colors = {

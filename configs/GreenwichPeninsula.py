@@ -66,8 +66,7 @@ STATUS_MAPPINGS = {
         'display_name': 'Status A',
         'color': '25E82C',  # Green
         'statuses': [
-            'A - Authorized and Accepted',
-            'Accepted'
+            'A - Authorized and Accepted'
         ],
         'description': 'Approved/Accepted documents'
     },
@@ -75,8 +74,7 @@ STATUS_MAPPINGS = {
         'display_name': 'Status B',
         'color': 'EDDDA1',  # Yellow
         'statuses': [
-            'B - Partial Sign Off (with comment)',
-            'Accepted with Comments'
+            'B - Partial Sign Off (with comment)'
         ],
         'description': 'Approved with comments'
     },
@@ -84,9 +82,7 @@ STATUS_MAPPINGS = {
         'display_name': 'Status C',
         'color': 'ED1111',  # Red
         'statuses': [
-            'C-Rejected',
-            'C - Rejected',
-            'Rejected'
+            'C-Rejected'
         ],
         'description': 'Rejected documents'
     },
@@ -94,12 +90,21 @@ STATUS_MAPPINGS = {
         'display_name': 'For Information',
         'color': 'FFFFFF',  # White
         'statuses': [
-            'For Information',
+            'For Information'
+        ],
+        'description': 'Informational or under review'
+    },
+    'Review': {
+        'display_name': 'Under Review/For Commenting',
+        'color': 'FFFFFF',  # White
+        'statuses': [
+            'For Status Change',
             'For Commenting',
             'Reviewed'
         ],
-        'description': 'Informational or under review'
+        'description': 'For commenting or under review'
     }
+
 }
 
 # Display order for progression reports (order matters for chart generation)
@@ -107,5 +112,6 @@ STATUS_DISPLAY_ORDER = [
     'Status A',
     'Status B',
     'Status C',
-    'Information'
+    'Information',
+    'Review'
 ] 

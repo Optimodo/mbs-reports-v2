@@ -19,7 +19,7 @@ COLUMN_MAPPINGS = {
     'Doc Ref': 'Name',                        # Document reference is in Name column
     'Doc Title': 'Description',               # Document title is in Description column  
     'Rev': 'Revision',                        # Revision is in Revision column
-    'Status': 'Status',                       # Status is in Status column
+    'Status': 'Revision Workflow',            # Use Revision Workflow column (more meaningful than Status)
     'Date (WET)': 'Revision Date Modified',   # Date is in Revision Date Modified column
     'Doc Path': 'Name'                        # Use Name as Doc Path (same as Doc Ref)
 }
@@ -79,46 +79,41 @@ CERTIFICATE_SETTINGS = {
     'status_suffix': ' (Certificates)'
 }
 
-# Status Mappings - Maps actual status values to standardized categories
+# Status Mappings - Maps actual Revision Workflow values to standardized categories
+# Note: Now using 'Revision Workflow' column instead of 'Status' column
 STATUS_MAPPINGS = {
-    'Construction': {
-        'display_name': 'Construction',
+    'Status A': {
+        'display_name': 'Status A (Approved)',
         'color': '25E82C',  # Green
         'statuses': [
-            'Construction'
+            'EA+DM - Status A',
         ],
-        'description': 'Construction documents'
+        'description': 'Approved documents - ready to proceed'
     },
-    'Proposal': {
-        'display_name': 'Proposal',
-        'color': '87CEEB',  # Light blue
+    'Rejected': {
+        'display_name': 'Rejected',
+        'color': 'ED1111',  # Red
         'statuses': [
-            'Proposal'
+            'QA Rejected',
+            'Not Approved'
         ],
-        'description': 'Proposal documents'
+        'description': 'Rejected documents requiring revision'
     },
-    'For Comments': {
-        'display_name': 'For Comments',
-        'color': 'EDDDA1',  # Yellow
+    'Under Review': {
+        'display_name': 'Under Review',
+        'color': 'FFFFFF',  # White
         'statuses': [
-            'For Comments'
+            'Under DC Review',
+            'Yes - Proceed to EA Review',
+            'QA Approved'
         ],
-        'description': 'Under review'
-    },
-    'Superseded': {
-        'display_name': 'Superseded',
-        'color': 'D3D3D3',  # Light gray
-        'statuses': [
-            'Superseded'
-        ],
-        'description': 'Superseded documents'
+        'description': 'Documents currently under review'
     }
 }
 
 # Display order for progression reports
 STATUS_DISPLAY_ORDER = [
-    'Construction',
-    'Proposal',
-    'For Comments',
-    'Superseded'
+    'Status A',
+    'Rejected',
+    'Under Review'
 ]

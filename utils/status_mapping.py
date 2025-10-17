@@ -70,7 +70,7 @@ def get_grouped_status_counts(df, config):
     """Group status counts by category according to project's STATUS_MAPPINGS.
     
     Args:
-        df: DataFrame containing document data with 'Status' column
+        df: DataFrame containing document data with 'Status' column or Series of status values
         config: Project configuration dictionary containing STATUS_MAPPINGS
         
     Returns:
@@ -78,10 +78,20 @@ def get_grouped_status_counts(df, config):
     """
     if not config or 'STATUS_MAPPINGS' not in config:
         # Fallback to raw status counts if no mappings defined
-        return df['Status'].value_counts().to_dict()
+        if hasattr(df, 'value_counts'):
+            # It's a Series
+            return df.value_counts().to_dict()
+        else:
+            # It's a DataFrame
+            return df['Status'].value_counts().to_dict()
     
     # Get actual status counts from data
-    status_counts = df['Status'].value_counts()
+    if hasattr(df, 'value_counts'):
+        # It's a Series (already filtered Status column)
+        status_counts = df.value_counts()
+    else:
+        # It's a DataFrame, get Status column
+        status_counts = df['Status'].value_counts()
     
     # Initialize category counts
     grouped_counts = {}

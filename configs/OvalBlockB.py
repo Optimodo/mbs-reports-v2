@@ -62,12 +62,19 @@ CERTIFICATE_SETTINGS = {
 
 # Status Mappings - Maps actual status values to standardized categories
 STATUS_MAPPINGS = {
+    'Published': {
+        'display_name': 'Published',
+        'color': '18BABE',  # Teal
+        'statuses': [
+            'Published'
+        ],
+        'description': 'Published documents'
+    },
     'Status A': {
         'display_name': 'Status A',
         'color': '25E82C',  # Green
         'statuses': [
-            'Accepted',
-            'Published'
+            'Accepted'
         ],
         'description': 'Approved/Accepted documents'
     },
@@ -92,26 +99,26 @@ STATUS_MAPPINGS = {
         'display_name': 'Shared',
         'color': 'E0F090',  # Light yellow-green
         'statuses': [
-            'Shared',
-            'For Sharing'
+            'Shared'
         ],
         'description': 'Shared for review'
     },
-    'Withdrawn': {
-        'display_name': 'Withdrawn/Obsolete',
+    'Other': {
+        'display_name': 'Other',
         'color': 'D3D3D3',  # Light gray
         'statuses': [
             'Withdrawn-Obsolete'
         ],
-        'description': 'Withdrawn or obsolete documents'
+        'description': 'Other or Withdrawn or obsolete documents'
     }
 }
 
 # Display order for progression reports
 STATUS_DISPLAY_ORDER = [
+    'Published',
     'Status A',
     'Status B',
     'Status C',
     'Shared',
-    'Withdrawn'
+    'Other'
 ]
