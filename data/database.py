@@ -122,7 +122,7 @@ class DocumentDatabase:
                     return s
                 
                 cursor.execute("""
-                    INSERT OR REPLACE INTO documents (
+                    INSERT INTO documents (
                         project_name, snapshot_date, snapshot_time,
                         doc_ref, doc_title, revision, status, file_type,
                         purpose_of_issue, date_wet, last_status_change_wet,
@@ -136,7 +136,7 @@ class DocumentDatabase:
                     clean_string(row.get('Doc Title', '')),
                     clean_string(row.get('Rev', '')),
                     clean_string(row.get('Status', '')),
-                    clean_string(row.get('File Type') or row.get('OVL - File Type') or row.get('Form', '')),
+                    clean_string(row.get('File Type', '')),  # Now expects standardized column from COLUMN_MAPPINGS
                     clean_string(row.get('Purpose of Issue', '')),
                     clean_string(row.get('Date (WET)', '')),
                     clean_string(row.get('Last Status Change (WET)', '')),
@@ -150,50 +150,6 @@ class DocumentDatabase:
         
         self.conn.commit()
         return inserted
-    
-    def insert_summaries(self, project_name, snapshot_date, snapshot_time, counts):
-        """Insert pre-aggregated summary counts.
-        
-        Args:
-            project_name: Name of the project
-            snapshot_date: Date of the snapshot
-            snapshot_time: Time of the snapshot
-            counts: Dictionary of counts (from analyzers.get_counts)
-        """
-        cursor = self.conn.cursor()
-        
-        # Insert revision summaries
-        for key, count in counts.items():
-            # Ensure count is always an integer
-            count_int = int(count) if pd.notna(count) and str(count).replace('.', '').replace('-', '').isdigit() else 0
-            
-            if key.startswith('Rev_'):
-                revision_type = key.replace('Rev_', '')
-                cursor.execute("""
-                    INSERT OR REPLACE INTO revision_summaries
-                    (project_name, snapshot_date, snapshot_time, revision_type, count)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (project_name, snapshot_date, snapshot_time, revision_type, count_int))
-            
-            # Insert status summaries
-            elif key.startswith('Status_'):
-                status = key.replace('Status_', '')
-                cursor.execute("""
-                    INSERT OR REPLACE INTO status_summaries
-                    (project_name, snapshot_date, snapshot_time, status, count)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (project_name, snapshot_date, snapshot_time, status, count_int))
-            
-            # Insert file type summaries
-            elif key.startswith('FileType_'):
-                file_type = key.replace('FileType_', '')
-                cursor.execute("""
-                    INSERT OR REPLACE INTO file_type_summaries
-                    (project_name, snapshot_date, snapshot_time, file_type, count)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (project_name, snapshot_date, snapshot_time, file_type, count_int))
-        
-        self.conn.commit()
     
     def mark_file_processed(self, project_name, file_path, file_name, snapshot_date, snapshot_time, record_count):
         """Mark a file as processed.
@@ -231,86 +187,6 @@ class DocumentDatabase:
         """, (project_name, file_name))
         result = cursor.fetchone()
         return result[0] > 0
-    
-    def get_summary_dataframe(self, project_name):
-        """Get summary data as DataFrame for report generation.
-        
-        Args:
-            project_name: Name of the project
-            
-        Returns:
-            DataFrame: Summary data with Date, Time, and all counts
-        """
-        # Get all unique snapshot dates for this project
-        query = """
-            SELECT DISTINCT snapshot_date, snapshot_time
-            FROM documents
-            WHERE project_name = ?
-            ORDER BY snapshot_date, snapshot_time
-        """
-        
-        df_dates = pd.read_sql_query(query, self.conn, params=(project_name,))
-        
-        if df_dates.empty:
-            return pd.DataFrame()
-        
-        summary_data = []
-        
-        for _, row in df_dates.iterrows():
-            snapshot_date = row['snapshot_date']
-            snapshot_time = row['snapshot_time']
-            
-            # Convert date format
-            date_obj = datetime.strptime(snapshot_date, '%Y-%m-%d')
-            formatted_date = date_obj.strftime('%d-%b-%Y')
-            
-            record = {
-                'Date': formatted_date,
-                'Time': snapshot_time
-            }
-            
-            # Get revision counts
-            rev_query = """
-                SELECT revision_type, count
-                FROM revision_summaries
-                WHERE project_name = ? AND snapshot_date = ? AND snapshot_time = ?
-            """
-            rev_df = pd.read_sql_query(rev_query, self.conn, 
-                                       params=(project_name, snapshot_date, snapshot_time))
-            for _, rev_row in rev_df.iterrows():
-                # Ensure count is integer, not string
-                count_val = int(rev_row['count']) if pd.notna(rev_row['count']) else 0
-                record[f"Rev_{rev_row['revision_type']}"] = count_val
-            
-            # Get status counts
-            status_query = """
-                SELECT status, count
-                FROM status_summaries
-                WHERE project_name = ? AND snapshot_date = ? AND snapshot_time = ?
-            """
-            status_df = pd.read_sql_query(status_query, self.conn,
-                                          params=(project_name, snapshot_date, snapshot_time))
-            for _, status_row in status_df.iterrows():
-                # Ensure count is integer, not string
-                count_val = int(status_row['count']) if pd.notna(status_row['count']) else 0
-                record[f"Status_{status_row['status']}"] = count_val
-            
-            # Get file type counts
-            ft_query = """
-                SELECT file_type, count
-                FROM file_type_summaries
-                WHERE project_name = ? AND snapshot_date = ? AND snapshot_time = ?
-            """
-            ft_df = pd.read_sql_query(ft_query, self.conn,
-                                      params=(project_name, snapshot_date, snapshot_time))
-            for _, ft_row in ft_df.iterrows():
-                # Ensure count is integer, not string
-                count_val = int(ft_row['count']) if pd.notna(ft_row['count']) else 0
-                record[f"FileType_{ft_row['file_type']}"] = count_val
-            
-            summary_data.append(record)
-        
-        return pd.DataFrame(summary_data)
     
     def get_latest_documents(self, project_name):
         """Get the most recent document snapshot for a project.
@@ -427,6 +303,9 @@ class DocumentDatabase:
         cursor = self.conn.cursor()
         cursor.execute("SELECT DISTINCT project_name FROM documents ORDER BY project_name")
         return [row[0] for row in cursor.fetchall()]
+    
+    # DEPRECATED: The following functions used old summary tables and are no longer needed
+    # All counting is now done dynamically - see analyzers/dynamic_counting.py
     
     def get_monthly_summaries(self, project_name, exclude_current_month=True):
         """Get last snapshot of each completed month.

@@ -21,6 +21,17 @@ EXCEL_SETTINGS = {
     ]
 }
 
+# Column mappings - Map raw Excel columns to standardized names
+COLUMN_MAPPINGS = {
+    'File Type': 'File Type',  # Already standardized
+    'Doc Ref': 'Doc Ref',
+    'Doc Title': 'Doc Title',
+    'Rev': 'Rev',
+    'Status': 'Status',
+    'Date (WET)': 'Date (WET)',
+    'Doc Path': 'Doc Path'
+}
+
 # Change detection settings
 CHANGE_DETECTION = {
     "track_columns": [
@@ -51,12 +62,61 @@ FILE_TYPE_SETTINGS = {
     "summary_title": "File Type Summary"  # Title for the summary section
 } 
 
+# Drawing Settings (for main summary report focus)
+DRAWING_SETTINGS = {
+    'enabled': True,
+    # File type filtering (Method 1) - EXACT matches only
+    'file_type_filter': {
+        'enabled': True,
+        'column_name': 'File Type',
+        'drawing_types': ['DR - Drawing (DR)', 'SC - Schematic Drawings (SC)']
+    },
+    # Doc Ref pattern filtering (Method 2) - 2-letter codes
+    'doc_ref_filter': {
+        'enabled': False,  # Enable if you want to filter by Doc Ref patterns
+        'column_name': 'Doc Ref',
+        'drawing_patterns': ['DR', 'SC']  # 2-letter codes to match in Doc Ref
+    }
+}
+
 # Certificate Settings
 CERTIFICATE_SETTINGS = {
     'enabled': True,
-    'certificate_types': ['CE - Certificate (CE)'],
+    # Report generation settings
+    'generate_report': True,  # Set to False to disable certificate report generation
     'summary_label': 'P01-PXX (Certificates)',
-    'status_suffix': ' (Certificates)'
+    'status_suffix': ' (Certificates)',
+    # File type filtering (Method 1)
+    'file_type_filter': {
+        'enabled': True,
+        'column_name': 'File Type',
+        'certificate_types': ['CE - Certificate (CE)']
+    },
+    # Doc Ref pattern filtering (Method 2)
+    'doc_ref_filter': {
+        'enabled': True,
+        'column_name': 'Doc Ref',
+        'certificate_patterns': ['CE']  # 2-letter codes to match in Doc Ref
+    }
+}
+
+# Technical Submittal Settings
+TECHNICAL_SUBMITTAL_SETTINGS = {
+    'enabled': True,
+    # Report generation settings
+    'generate_report': False,  # Set to True when ready to create technical submittal reports
+    # File type filtering (Method 1)
+    'file_type_filter': {
+        'enabled': True,
+        'column_name': 'File Type',  # Standardized column name in database
+        'technical_submittal_types': ['TS - Technical submission (TS)']
+    },
+    # Doc Ref pattern filtering (Method 2)
+    'doc_ref_filter': {
+        'enabled': False,
+        'column_name': 'Doc Ref',
+        'technical_submittal_patterns': ['TS', 'TX']
+    }
 }
 
 # Status Mappings - Maps actual status values to standardized categories

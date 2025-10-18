@@ -74,9 +74,18 @@ FILE_TYPE_SETTINGS = {
 # Certificate Settings
 CERTIFICATE_SETTINGS = {
     'enabled': False,
-    'certificate_types': [],
-    'summary_label': 'P01-PXX (Certificates)',
-    'status_suffix': ' (Certificates)'
+    'generate_report': False
+}
+
+# Technical Submittal Settings
+TECHNICAL_SUBMITTAL_SETTINGS = {
+    'enabled': False,
+    'generate_report': False
+}
+
+# Drawing Settings (for main summary report - all documents in this case)
+DRAWING_SETTINGS = {
+    'enabled': False  # No file type column, so include all documents
 }
 
 # Status Mappings - Maps actual Revision Workflow values to standardized categories

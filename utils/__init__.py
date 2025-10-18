@@ -16,6 +16,13 @@ from .status_mapping import (
     get_grouped_status_counts,
     get_status_display_order
 )
+from .document_filters import (
+    filter_certificates,
+    filter_technical_submittals,
+    filter_drawings_and_schematics,
+    get_main_report_data,
+    get_document_type_summary
+)
 
 __all__ = [
     'load_processed_files_per_project',
@@ -29,6 +36,11 @@ __all__ = [
     'get_status_color',
     'get_status_display_name',
     'get_grouped_status_counts',
-    'get_status_display_order'
+    'get_status_display_order',
+    'filter_certificates',
+    'filter_technical_submittals',
+    'filter_drawings_and_schematics',
+    'get_main_report_data',
+    'get_document_type_summary'
 ]
 

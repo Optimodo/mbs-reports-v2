@@ -204,18 +204,15 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
         bool: True if successful, False otherwise
     """
     try:
-        print(f"Debug: Starting progression report generation for {output_file}")
-        print(f"Debug: summary_df has {len(summary_df)} rows")
+        # Starting progression report generation
         
         # Create a new workbook or load existing
         if os.path.exists(output_file):
             wb = load_workbook(output_file)
-            print(f"Debug: Loaded existing progression report")
         else:
             wb = Workbook()
             # Remove the default 'Sheet' worksheet
             wb.remove(wb['Sheet'])
-            print(f"Debug: Created new progression report")
         
         # Get or create the Progression Report sheet
         if 'Progression Report' in wb.sheetnames:
@@ -226,11 +223,9 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 if any(cell.value for cell in col):
                     last_col = max(last_col, col[0].column)
             next_col = last_col + 1
-            print(f"Debug: Existing sheet found, next column will be {next_col}")
         else:
             sheet = wb.create_sheet('Progression Report')
             next_col = 2  # Start with column B (A is for labels)
-            print(f"Debug: Created new sheet, starting with column {next_col}")
         
         # Set up the sheet if it's new
         if next_col == 2:
@@ -375,7 +370,6 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
         # Function to fill empty cells with zeros in table sections
         def fill_empty_cells_with_zeros():
             """Fill any empty cells in table sections with zeros"""
-            print("  Debug: Starting fill_empty_cells_with_zeros function")
             
             # Find all date headers (column headers) to identify table sections
             date_headers = []
@@ -391,11 +385,11 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                             next_cell = sheet[f'A{next_row}']
                             if next_cell.value and 'Total' in str(next_cell.value):
                                 date_headers.append((row_num, next_row))
-                                print(f"  Debug: Found table section from row {row_num} to {next_row}")
+                                # Found table section
                                 break
                         break
             
-            print(f"  Debug: Found {len(date_headers)} table sections")
+            # Found table sections for processing
             
             # For each table section, fill empty cells with zeros
             for start_row, end_row in date_headers:
@@ -406,8 +400,6 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 for col in sheet.columns:
                     if any(cell.value for cell in col):
                         max_col = max(max_col, col[0].column)
-                
-                print(f"  Debug: Processing section rows {start_row + 1} to {end_row}, columns B to {chr(ord('A') + max_col - 1)}")
                 
                 # Fill empty cells in this section
                 cells_filled = 0
@@ -420,10 +412,6 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                             sheet[f'{col_letter}{row}'].font = Font(name='Calibri', size=11)
                             sheet[f'{col_letter}{row}'].alignment = Alignment(horizontal='center', vertical='center')
                             cells_filled += 1
-                
-                print(f"  Debug: Filled {cells_filled} empty cells in this section")
-            
-            print("  Debug: Completed fill_empty_cells_with_zeros function")
         
         # Function to add a section header
         def add_section_header(title, row):
@@ -798,7 +786,7 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                 sheet[f'{date_col}{actual_row}'].font = Font(name='Calibri', size=11, bold=True)
                 sheet[f'{date_col}{actual_row}'].alignment = Alignment(horizontal='center', vertical='center')
                 sheet[f'{date_col}{actual_row}'].fill = PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
-                print(f"  Added total {total_value} to {date_col}{actual_row} for {label}")
+                # Added total value to cell
             else:
                 print(f"  Warning: Skipping merged cell at {date_col}{actual_row} for total row {label}")
                 # Try to find the correct cell in the merged range
@@ -813,7 +801,7 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
                                 sheet[f'{date_col}{merged_range.min_row}'].font = Font(name='Calibri', size=11, bold=True)
                                 sheet[f'{date_col}{merged_range.min_row}'].alignment = Alignment(horizontal='center', vertical='center')
                                 sheet[f'{date_col}{merged_range.min_row}'].fill = PatternFill(start_color='E6E6E6', end_color='E6E6E6', fill_type='solid')
-                                print(f"  Added total {total_value} to {date_col}{merged_range.min_row} (merged range) for {label}")
+                                # Added total value to merged cell
                                 break
                         else:
                             print(f"  Column {date_col} is not within merged range {merged_range}")

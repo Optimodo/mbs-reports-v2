@@ -33,7 +33,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from data import DocumentDatabase
 from config import load_project_config
 from processors import load_document_listing
-from analyzers import get_counts
 from utils import get_file_timestamp, slugify
 
 
@@ -168,11 +167,7 @@ def import_project_files(project_code, project_name, force=False, db_path='data/
                 # Insert documents
                 inserted = db.insert_documents(project_name, snapshot_date, snapshot_time, df)
                 
-                # Get and insert summary counts
-                counts = get_counts(df, config)
-                db.insert_summaries(project_name, snapshot_date, snapshot_time, counts)
-                
-                # Mark as processed
+                # Mark as processed (no more summary calculation - using dynamic counting)
                 db.mark_file_processed(project_name, file_path, file_path.name, 
                                        snapshot_date, snapshot_time, len(df))
                 

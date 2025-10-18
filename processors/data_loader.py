@@ -89,14 +89,26 @@ def load_document_listing(file_path, config):
     
     try:
         if file_path_str.endswith('.csv'):
-            # Process CSV file
+            # Process CSV file (clean_revision already called in process_csv_file)
             df = process_csv_file(file_path, config)
         else:
             # Process Excel file
             excel_settings = config.get('EXCEL_SETTINGS', {})
             df = pd.read_excel(file_path, **excel_settings)
+            
+            # Apply column mappings if provided (same as CSV processing)
+            column_mappings = config.get('COLUMN_MAPPINGS')
+            if column_mappings:
+                for target_col, source_col in column_mappings.items():
+                    if source_col in df.columns:
+                        df[target_col] = df[source_col]
+            
+            # Clean revision column for Excel files (CSV already cleaned in process_csv_file)
+            if 'Rev' in df.columns:
+                df['Rev'] = df['Rev'].apply(clean_revision)
         
         # Convert all columns to string for consistency
+        # IMPORTANT: This must happen AFTER clean_revision to avoid converting 'nan' to string 'nan'
         for col in df.columns:
             try:
                 df[col] = df[col].astype(str)

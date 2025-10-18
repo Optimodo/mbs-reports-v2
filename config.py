@@ -110,7 +110,9 @@ def load_project_config(project_name, input_file=None):
         'CHANGE_DETECTION': module.CHANGE_DETECTION if hasattr(module, 'CHANGE_DETECTION') else DEFAULT_SETTINGS['CHANGE_DETECTION'],
         'REPORT_SETTINGS': module.REPORT_SETTINGS if hasattr(module, 'REPORT_SETTINGS') else DEFAULT_SETTINGS['REPORT_SETTINGS'],
         'FILE_TYPE_SETTINGS': module.FILE_TYPE_SETTINGS if hasattr(module, 'FILE_TYPE_SETTINGS') else DEFAULT_SETTINGS['FILE_TYPE_SETTINGS'],
-        'CERTIFICATE_SETTINGS': module.CERTIFICATE_SETTINGS if hasattr(module, 'CERTIFICATE_SETTINGS') else DEFAULT_SETTINGS['CERTIFICATE_SETTINGS'],
+        'CERTIFICATE_SETTINGS': module.CERTIFICATE_SETTINGS if hasattr(module, 'CERTIFICATE_SETTINGS') else DEFAULT_SETTINGS.get('CERTIFICATE_SETTINGS', {}),
+        'DRAWING_SETTINGS': module.DRAWING_SETTINGS if hasattr(module, 'DRAWING_SETTINGS') else DEFAULT_SETTINGS.get('DRAWING_SETTINGS', {}),
+        'TECHNICAL_SUBMITTAL_SETTINGS': module.TECHNICAL_SUBMITTAL_SETTINGS if hasattr(module, 'TECHNICAL_SUBMITTAL_SETTINGS') else DEFAULT_SETTINGS.get('TECHNICAL_SUBMITTAL_SETTINGS', {}),
         'PROJECT_TITLE': getattr(module, 'PROJECT_TITLE', project_name),
         'MBS_FILTER': module.MBS_FILTER if hasattr(module, 'MBS_FILTER') else None,
         'COLUMN_MAPPINGS': module.COLUMN_MAPPINGS if hasattr(module, 'COLUMN_MAPPINGS') else None,
@@ -158,5 +160,16 @@ DEFAULT_SETTINGS = {
         "column_name": "File Type",  # Default file type column name
         "include_in_summary": True,
         "summary_title": "File Type Summary"
+    },
+    'CERTIFICATE_SETTINGS': {
+        'enabled': False,
+        'generate_report': False
+    },
+    'DRAWING_SETTINGS': {
+        'enabled': False  # By default, include all documents
+    },
+    'TECHNICAL_SUBMITTAL_SETTINGS': {
+        'enabled': False,
+        'generate_report': False
     }
 } 

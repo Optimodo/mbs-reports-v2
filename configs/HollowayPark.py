@@ -38,9 +38,21 @@ FILE_TYPE_SETTINGS = {
     'enabled': False
 }
 
+# Drawing Settings (for main summary report - all documents in this case)
+DRAWING_SETTINGS = {
+    'enabled': False  # No file type column, so include all documents
+}
+
 # Certificate settings (not applicable for this project)
 CERTIFICATE_SETTINGS = {
-    'enabled': False
+    'enabled': False,
+    'generate_report': False
+}
+
+# Technical Submittal Settings
+TECHNICAL_SUBMITTAL_SETTINGS = {
+    'enabled': False,
+    'generate_report': False
 }
 
 # Status Mappings - Maps actual status values to standardized categories
