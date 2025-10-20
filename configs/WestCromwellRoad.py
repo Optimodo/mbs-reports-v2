@@ -103,7 +103,8 @@ STATUS_MAPPINGS = {
         'color': 'ED1111',  # Red
         'statuses': [
             'QA Rejected',
-            'Not Approved'
+            'Not Approved',
+            'DM - Status C'
         ],
         'description': 'Rejected documents requiring revision'
     },

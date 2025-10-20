@@ -111,6 +111,8 @@ def load_project_config(project_name, input_file=None):
         'REPORT_SETTINGS': module.REPORT_SETTINGS if hasattr(module, 'REPORT_SETTINGS') else DEFAULT_SETTINGS['REPORT_SETTINGS'],
         'FILE_TYPE_SETTINGS': module.FILE_TYPE_SETTINGS if hasattr(module, 'FILE_TYPE_SETTINGS') else DEFAULT_SETTINGS['FILE_TYPE_SETTINGS'],
         'CERTIFICATE_SETTINGS': module.CERTIFICATE_SETTINGS if hasattr(module, 'CERTIFICATE_SETTINGS') else DEFAULT_SETTINGS.get('CERTIFICATE_SETTINGS', {}),
+        'CERTIFICATE_TRACKING': module.CERTIFICATE_TRACKING if hasattr(module, 'CERTIFICATE_TRACKING') else DEFAULT_SETTINGS.get('CERTIFICATE_TRACKING', {}),
+        'ACCOMMODATION_DATA': module.ACCOMMODATION_DATA if hasattr(module, 'ACCOMMODATION_DATA') else DEFAULT_SETTINGS.get('ACCOMMODATION_DATA', {}),
         'DRAWING_SETTINGS': module.DRAWING_SETTINGS if hasattr(module, 'DRAWING_SETTINGS') else DEFAULT_SETTINGS.get('DRAWING_SETTINGS', {}),
         'TECHNICAL_SUBMITTAL_SETTINGS': module.TECHNICAL_SUBMITTAL_SETTINGS if hasattr(module, 'TECHNICAL_SUBMITTAL_SETTINGS') else DEFAULT_SETTINGS.get('TECHNICAL_SUBMITTAL_SETTINGS', {}),
         'PROJECT_TITLE': getattr(module, 'PROJECT_TITLE', project_name),
@@ -164,6 +166,12 @@ DEFAULT_SETTINGS = {
     'CERTIFICATE_SETTINGS': {
         'enabled': False,
         'generate_report': False
+    },
+    'CERTIFICATE_TRACKING': {
+        # Empty by default - projects can optionally define apartment certificate tracking
+    },
+    'ACCOMMODATION_DATA': {
+        # Empty by default - projects can optionally define accommodation data
     },
     'DRAWING_SETTINGS': {
         'enabled': False  # By default, include all documents

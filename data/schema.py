@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS documents (
     last_status_change_wet TEXT,
     last_updated_wet TEXT,
     doc_path TEXT,
+    publisher TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     
     -- No UNIQUE constraint - allow all rows from source files

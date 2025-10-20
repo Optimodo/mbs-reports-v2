@@ -126,8 +126,8 @@ class DocumentDatabase:
                         project_name, snapshot_date, snapshot_time,
                         doc_ref, doc_title, revision, status, file_type,
                         purpose_of_issue, date_wet, last_status_change_wet,
-                        last_updated_wet, doc_path
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        last_updated_wet, doc_path, publisher
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     project_name,
                     snapshot_date,
@@ -141,7 +141,8 @@ class DocumentDatabase:
                     clean_string(row.get('Date (WET)', '')),
                     clean_string(row.get('Last Status Change (WET)', '')),
                     clean_string(row.get('Last Updated (WET)', '')),
-                    clean_string(row.get('Doc Path', ''))
+                    clean_string(row.get('Doc Path', '')),
+                    clean_string(row.get('Publisher', ''))
                 ))
                 inserted += 1
             except Exception as e:
@@ -204,7 +205,8 @@ class DocumentDatabase:
                    status AS 'Status',
                    file_type AS 'File Type',
                    date_wet AS 'Date (WET)',
-                   doc_path AS 'Doc Path'
+                   doc_path AS 'Doc Path',
+                   publisher AS 'Publisher'
             FROM documents
             WHERE project_name = ?
               AND (snapshot_date, snapshot_time) = (
@@ -236,7 +238,8 @@ class DocumentDatabase:
                    status AS 'Status',
                    file_type AS 'File Type',
                    date_wet AS 'Date (WET)',
-                   doc_path AS 'Doc Path'
+                   doc_path AS 'Doc Path',
+                   publisher AS 'Publisher'
             FROM documents
             WHERE project_name = ?
               AND snapshot_date = ?
