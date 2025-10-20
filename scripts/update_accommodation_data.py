@@ -51,6 +51,10 @@ def clean_floor_number(floor_value, config):
     
     floor_str = str(floor_value).strip()
     
+    # Handle newlines in floor values (e.g., "10\nB3+4" -> "10")
+    if '\n' in floor_str:
+        floor_str = floor_str.split('\n')[0].strip()
+    
     # Apply prefix removal if configured (e.g., "L01" -> "01")
     prefix_to_remove = config.get('remove_prefix')
     if prefix_to_remove and floor_str.startswith(prefix_to_remove):
@@ -64,7 +68,8 @@ def clean_floor_number(floor_value, config):
     # Convert to integer if configured
     if config.get('convert_to_int', False):
         try:
-            return int(floor_str)
+            # First try converting to float (handles "1.0"), then to int
+            return int(float(floor_str))
         except ValueError:
             return floor_str
     
@@ -190,6 +195,9 @@ def parse_accommodation_schedule(project_name):
     # Get cleaning configurations
     apartment_cleaning = schedule_config.get('apartment_cleaning', {})
     floor_cleaning = schedule_config.get('floor_cleaning', {})
+    bedrooms_cleaning = schedule_config.get('bedrooms_cleaning', {})
+    apartment_type_cleaning = schedule_config.get('apartment_type_cleaning', {})
+    custom_extractors = schedule_config.get('custom_extractors', {})
     
     # Build structured data
     accommodation_data = {
@@ -224,13 +232,69 @@ def parse_accommodation_schedule(project_name):
         apt_type = str(row.get(type_col)).strip() if type_col and pd.notna(row.get(type_col)) else None
         tenure = str(row.get(tenure_col)).strip() if tenure_col and pd.notna(row.get(tenure_col)) else None
         
-        # Parse bedrooms (handle non-numeric values)
+        # Apply custom extractors if defined (e.g., extract block/floor from plot number)
+        import re
+        if custom_extractors:
+            # Extract block from custom pattern
+            if 'block' in custom_extractors and not block:
+                block_config = custom_extractors['block']
+                source_col = block_config.get('source_column')
+                pattern = block_config.get('pattern')
+                format_str = block_config.get('format', '{0}')
+                
+                if source_col and pattern and pd.notna(row.get(source_col)):
+                    source_value = str(row.get(source_col)).strip()
+                    match = re.search(pattern, source_value)
+                    if match:
+                        block = format_str.format(*match.groups())
+            
+            # Extract floor from custom pattern
+            if 'floor' in custom_extractors and not floor:
+                floor_config = custom_extractors['floor']
+                source_col = floor_config.get('source_column')
+                pattern = floor_config.get('pattern')
+                convert_to_int = floor_config.get('convert_to_int', False)
+                
+                if source_col and pattern and pd.notna(row.get(source_col)):
+                    source_value = str(row.get(source_col)).strip()
+                    match = re.search(pattern, source_value)
+                    if match:
+                        floor_value = match.group(1)
+                        if convert_to_int:
+                            try:
+                                floor = int(floor_value)
+                            except ValueError:
+                                floor = floor_value
+                        else:
+                            floor = floor_value
+        
+        # Clean apartment type if needed
+        if apt_type and apartment_type_cleaning:
+            prefix_to_remove = apartment_type_cleaning.get('remove_prefix')
+            if prefix_to_remove and apt_type.startswith(prefix_to_remove):
+                apt_type = apt_type[len(prefix_to_remove):]
+        
+        # Parse bedrooms (handle non-numeric values and extraction patterns)
         bedrooms = None
         if bedrooms_col and pd.notna(row.get(bedrooms_col)):
-            try:
-                bedrooms = int(row.get(bedrooms_col))
-            except (ValueError, TypeError):
-                pass  # Skip non-numeric bedroom values
+            bedrooms_value = str(row.get(bedrooms_col)).strip()
+            
+            # Check if extraction pattern is specified
+            extract_pattern = bedrooms_cleaning.get('extract_pattern')
+            if extract_pattern:
+                import re
+                match = re.search(extract_pattern, bedrooms_value)
+                if match:
+                    try:
+                        bedrooms = int(match.group(1))
+                    except (ValueError, TypeError, IndexError):
+                        pass
+            else:
+                # Try direct conversion
+                try:
+                    bedrooms = int(bedrooms_value)
+                except (ValueError, TypeError):
+                    pass  # Skip non-numeric bedroom values
         
         # Store in apartment lookup
         accommodation_data['apartment_lookup'][apt_num] = {
@@ -242,26 +306,27 @@ def parse_accommodation_schedule(project_name):
             'tenure': tenure
         }
         
-        # Update phase statistics
-        if phase:
-            if phase not in phase_stats:
-                phase_stats[phase] = {
+        # Update phase statistics (use 'Default' if no phase specified)
+        phase_key = phase if phase else 'Default'
+        
+        if phase_key not in phase_stats:
+            phase_stats[phase_key] = {
+                'apartments': [],
+                'blocks': {}
+            }
+        phase_stats[phase_key]['apartments'].append(apt_num)
+        
+        # Update block statistics within phase
+        if block:
+            if block not in phase_stats[phase_key]['blocks']:
+                phase_stats[phase_key]['blocks'][block] = {
                     'apartments': [],
-                    'blocks': {}
+                    'floors': set()
                 }
-            phase_stats[phase]['apartments'].append(apt_num)
-            
-            # Update block statistics within phase
-            if block:
-                if block not in phase_stats[phase]['blocks']:
-                    phase_stats[phase]['blocks'][block] = {
-                        'apartments': [],
-                        'floors': set()
-                    }
-                phase_stats[phase]['blocks'][block]['apartments'].append(apt_num)
-                # Include floor even if it's 0 (but not if it's None)
-                if floor is not None:
-                    phase_stats[phase]['blocks'][block]['floors'].add(floor)
+            phase_stats[phase_key]['blocks'][block]['apartments'].append(apt_num)
+            # Include floor even if it's 0 (but not if it's None)
+            if floor is not None:
+                phase_stats[phase_key]['blocks'][block]['floors'].add(floor)
         
         # Update apartment type statistics
         if apt_type:
@@ -283,19 +348,36 @@ def parse_accommodation_schedule(project_name):
     accommodation_data['total_apartments'] = valid_apartments
     print(f"✓ Processed {valid_apartments} valid apartments")
     
+    # Helper function to sort mixed types (int and str apartment numbers)
+    def sort_apartments(apt_list):
+        """Sort apartment list, handling mixed int/str types."""
+        try:
+            # Try sorting as-is
+            return sorted(apt_list)
+        except TypeError:
+            # If comparison fails, convert all to strings for sorting
+            return sorted(apt_list, key=str)
+    
     # Build phases structure
     for phase, stats in phase_stats.items():
         phase_data = {
             'apartment_count': len(stats['apartments']),
-            'apartments': sorted(stats['apartments']),
+            'apartments': sort_apartments(stats['apartments']),
             'blocks': {}
         }
         
         for block, block_data in stats['blocks'].items():
+            # Sort floors, handling potential mixed int/str types
+            try:
+                sorted_floors = sorted(list(block_data['floors']))
+            except TypeError:
+                # If comparison fails, convert all to int for sorting
+                sorted_floors = sorted(list(block_data['floors']), key=lambda x: int(x) if x is not None else -1)
+            
             phase_data['blocks'][block] = {
                 'apartment_count': len(block_data['apartments']),
-                'apartments': sorted(block_data['apartments']),
-                'floors': sorted(list(block_data['floors']))
+                'apartments': sort_apartments(block_data['apartments']),
+                'floors': sorted_floors
             }
         
         accommodation_data['phases'][phase] = phase_data
@@ -305,7 +387,7 @@ def parse_accommodation_schedule(project_name):
         accommodation_data['apartment_types'][apt_type] = {
             'count': len(stats['apartments']),
             'bedrooms': stats['bedrooms'],
-            'apartments': sorted(stats['apartments'])
+            'apartments': sort_apartments(stats['apartments'])
         }
     
     # Build tenure structure
@@ -313,7 +395,7 @@ def parse_accommodation_schedule(project_name):
     for tenure, stats in tenure_stats.items():
         accommodation_data['tenures'][tenure] = {
             'count': len(stats['apartments']),
-            'apartments': sorted(stats['apartments'])
+            'apartments': sort_apartments(stats['apartments'])
         }
     
     # Print summary
@@ -405,7 +487,9 @@ def update_config_file(project_name, accommodation_data):
     data_section += f"    'apartment_lookup': {{\n"
     data_section += f"        # Full apartment lookup dictionary with {len(accommodation_data['apartment_lookup'])} apartments\n"
     for apt_num, apt_data in accommodation_data['apartment_lookup'].items():
-        data_section += f"        {apt_num}: {apt_data},\n"
+        # Quote apartment numbers if they are strings, otherwise use as-is for numeric IDs
+        apt_key = f"'{apt_num}'" if isinstance(apt_num, str) else apt_num
+        data_section += f"        {apt_key}: {apt_data},\n"
     data_section += f"    }}\n"
     data_section += f"}}\n"
     
@@ -484,6 +568,69 @@ def get_available_projects():
     return projects
 
 
+def show_current_status():
+    """Display current accommodation data status for all projects."""
+    print("\n" + "=" * 80)
+    print("📊 CURRENT ACCOMMODATION DATA STATUS")
+    print("=" * 80)
+    
+    available_projects = get_available_projects()
+    
+    if not available_projects:
+        print("\n❌ No projects configured")
+        return
+    
+    total_apartments = 0
+    
+    print(f"\n{'Project':<25} {'Apartments':<12} {'Phases':<8} {'Blocks':<8} {'Types':<8} {'Last Updated'}")
+    print("-" * 80)
+    
+    for project_name in sorted(available_projects.keys()):
+        try:
+            import importlib.util
+            config_file = CONFIGS_DIR / f"{project_name}.py"
+            spec = importlib.util.spec_from_file_location(project_name, config_file)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            
+            if hasattr(module, 'ACCOMMODATION_DATA'):
+                data = module.ACCOMMODATION_DATA
+                apartments = data.get('total_apartments', 0)
+                total_apartments += apartments
+                
+                phases = len(data.get('phases', {}))
+                
+                # Count total blocks - check both phase data and apartment lookup
+                blocks = set()
+                phases_dict = data.get('phases', {})
+                
+                # First try getting blocks from phases structure
+                if phases_dict:
+                    for phase_data in phases_dict.values():
+                        blocks.update(phase_data.get('blocks', {}).keys())
+                
+                # If no blocks found in phases, extract from apartment_lookup
+                if not blocks and 'apartment_lookup' in data:
+                    for apt_data in data['apartment_lookup'].values():
+                        if apt_data.get('block'):
+                            blocks.add(apt_data['block'])
+                
+                block_count = len(blocks)
+                
+                types = len(data.get('apartment_types', {}))
+                last_updated = data.get('last_updated', 'N/A')
+                
+                print(f"{project_name:<25} {apartments:<12} {phases:<8} {block_count:<8} {types:<8} {last_updated}")
+            else:
+                print(f"{project_name:<25} {'Not configured':<50}")
+        except Exception as e:
+            print(f"{project_name:<25} {'Error loading':<50}")
+    
+    print("-" * 80)
+    print(f"{'TOTAL':<25} {total_apartments:<12}")
+    print("=" * 80)
+
+
 def show_menu():
     """Display interactive menu for selecting projects to update."""
     print("\n" + "=" * 80)
@@ -512,6 +659,7 @@ def show_menu():
         print(f"  {i}. {project_name:25} → {file_path}")
     
     print(f"  {len(project_list) + 1}. Update ALL projects")
+    print(f"  {len(project_list) + 2}. Show current status")
     print("  0. Exit")
     print("-" * 80)
     
@@ -529,10 +677,14 @@ def show_menu():
                 return None
             elif choice_num == len(project_list) + 1:
                 return project_list  # Return all projects
+            elif choice_num == len(project_list) + 2:
+                # Show current status and return to menu
+                show_current_status()
+                return show_menu()  # Re-display menu after showing status
             elif 1 <= choice_num <= len(project_list):
                 return [project_list[choice_num - 1]]  # Return single project as list
             else:
-                print(f"❌ Invalid choice. Please select 0-{len(project_list) + 1}")
+                print(f"❌ Invalid choice. Please select 0-{len(project_list) + 2}")
         except ValueError:
             print("❌ Please enter a valid number")
         except KeyboardInterrupt:

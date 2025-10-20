@@ -39,6 +39,12 @@ ENV/
 # Generated output files
 output/
 
+# Database files
+data/*.db
+data/*.db-journal
+*.db
+*.db-journal
+
 # Logs
 *.log
 
