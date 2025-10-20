@@ -14,33 +14,24 @@ CSV_SETTINGS = {
     'keep_default_na': True
 }
 
-# Column mappings for CSV to standard format
+# Column mappings - Now using Excel source (previously CSV)
+# Excel has both 'Status' and 'Revision Workflow' columns
+# We'll use both: Status for superseded detection, Revision Workflow for main status
 COLUMN_MAPPINGS = {
     'Doc Ref': 'Name',                        # Document reference is in Name column
     'Doc Title': 'Description',               # Document title is in Description column  
     'Rev': 'Revision',                        # Revision is in Revision column
-    'Status': 'Revision Workflow',            # Use Revision Workflow column (more meaningful than Status)
+    'Status': 'Revision Workflow',            # Primary status from Revision Workflow column
     'Date (WET)': 'Revision Date Modified',   # Date is in Revision Date Modified column
-    'Doc Path': 'Name'                        # Use Name as Doc Path (same as Doc Ref)
+    'Doc Path': 'Full Path'                   # Full folder path for filtering
 }
 
-# Excel processing settings (for backward compatibility)
+# Excel processing settings
+# Using new Excel source with Full Path column
 EXCEL_SETTINGS = {
-    "sheet_name": 0,
-    "skiprows": 6,
-    "usecols": [
-        "Doc Title",
-        "Doc Ref",
-        "Rev",
-        "Status",
-        "Purpose of Issue",
-        "Date (WET)",
-        "Last Status Change (WET)",
-        "File Type",
-        "File Number",
-        "Last Updated (WET)",
-        "Doc Path"
-    ]
+    "sheet_name": 0
+    # No skiprows or usecols - load all columns from the Excel file
+    # Column mapping will handle transforming to standard format
 }
 
 # Change detection settings
@@ -99,8 +90,16 @@ STATUS_MAPPINGS = {
         ],
         'description': 'Approved documents - ready to proceed'
     },
-    'Rejected': {
-        'display_name': 'Rejected',
+    'Status B': {
+        'display_name': 'Status B',
+        'color': 'EDDDA1',  # Yellow
+        'statuses': [
+            'Status B',
+        ],
+        'description': 'Approved documents - ready to proceed'
+    },
+    'Status C': {
+        'display_name': 'Status C',
         'color': 'ED1111',  # Red
         'statuses': [
             'QA Rejected',
@@ -114,15 +113,76 @@ STATUS_MAPPINGS = {
         'statuses': [
             'Under DC Review',
             'Yes - Proceed to EA Review',
+            'Yes - Proceed to Consultant Review',
             'QA Approved'
         ],
         'description': 'Documents currently under review'
+    },
+    'Other': {
+        'display_name': 'Other',
+        'color': 'FFFFFF',  # White
+        'statuses': [
+            'Superseeded',
+            'Withdrawn',
+            'Ardmore Package Manager'
+        ],
+        'description': 'Superseeded or Withdrawn documents'
     }
 }
 
 # Display order for progression reports
 STATUS_DISPLAY_ORDER = [
     'Status A',
-    'Rejected',
-    'Under Review'
+    'Status B',
+    'Status C',
+    'Under Review',
+    'Other'
 ]
+
+def map_wcr_status(row):
+    """
+    Custom status mapping for West Cromwell Road.
+    
+    Special logic:
+    - Documents in '/SS/' folder (superseded) → map to 'Superseeded' status
+    - This ensures superseded documents are categorized as 'Other' status
+    
+    The Excel file has both 'Status' and 'Revision Workflow' columns:
+    - 'Status' column shows document state (Superseded, ACTIVE, REVISED, etc.)
+    - 'Revision Workflow' column shows workflow status (QA Approved, Not Approved, etc.)
+    - 'Full Path' column shows folder location
+    
+    We use:
+    1. Full Path to detect /SS/ folder → set to 'Superseeded'
+    2. Otherwise, use Revision Workflow for normal status mapping
+    """
+    # Get the full path (after column mapping, this will be in 'Doc Path')
+    doc_path = row.get('Full Path', '') if pd.notna(row.get('Full Path', '')) else ''
+    doc_path = str(doc_path).strip()
+    
+    # Check if document is in SS (superseded) folder
+    # Path format is "/ SS /" with spaces around SS
+    if '/ SS /' in doc_path or '/ ss /' in doc_path or '/SS/' in doc_path or '/ss/' in doc_path:
+        return 'Superseeded'
+    
+    # Get the status column value (this will be raw 'Status' from Excel)
+    status_raw = row.get('Status', '') if pd.notna(row.get('Status', '')) else ''
+    status_raw = str(status_raw).strip()
+    
+    # If Status column explicitly says Superseded (regardless of folder)
+    if status_raw.lower() == 'superseded':
+        return 'Superseeded'
+    
+    # Otherwise, use Revision Workflow column for normal status mapping
+    revision_workflow = row.get('Revision Workflow', '') if pd.notna(row.get('Revision Workflow', '')) else ''
+    revision_workflow = str(revision_workflow).strip()
+    
+    # Handle string 'nan' from pandas string conversion
+    if revision_workflow.lower() == 'nan':
+        revision_workflow = ''
+    
+    # Return the Revision Workflow value (will be mapped by STATUS_MAPPINGS)
+    if revision_workflow:
+        return revision_workflow
+    
+    return 'Other'

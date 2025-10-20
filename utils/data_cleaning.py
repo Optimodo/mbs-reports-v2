@@ -52,5 +52,10 @@ def clean_revision(val):
     for cyrillic, latin in cyrillic_to_latin.items():
         s = s.replace(cyrillic, latin)
     
+    # Remove trailing dots (used by some projects for reissued QA rejected documents)
+    # Example: C01. → C01, P02... → P02
+    # This ensures consistent revision counting across all projects
+    s = s.rstrip('.')
+    
     return s
 

@@ -55,20 +55,39 @@ def get_file_timestamp(file_path):
             print(f"Warning: Could not extract timestamp from CSV file or filename: {filename}")
             return None, None
         else:
-            # Excel file - Read just cell B4 (which is merged from B to I)
-            timestamp_df = pd.read_excel(file_path, usecols="B", nrows=4, header=None)
-            timestamp_str = timestamp_df.iloc[3, 0]
+            # Excel file - Try to read cell B4 for timestamp (most projects)
+            try:
+                timestamp_df = pd.read_excel(file_path, usecols="B", nrows=4, header=None)
+                timestamp_str = timestamp_df.iloc[3, 0]
+                
+                # Split by commas and get the third part (date and time)
+                parts = str(timestamp_str).split(',')
+                if len(parts) >= 3:
+                    date_time_part = parts[2].strip()
+                    # Split by space to separate date and time
+                    date_time = date_time_part.split()
+                    if len(date_time) >= 2:
+                        date_str = date_time[0]  # Keep as text
+                        time_str = date_time[1]  # Keep as text
+                        return date_str, time_str
+            except:
+                pass  # Fall through to filename parsing
             
-            # Split by commas and get the third part (date and time)
-            parts = timestamp_str.split(',')
-            if len(parts) >= 3:
-                date_time_part = parts[2].strip()
-                # Split by space to separate date and time
-                date_time = date_time_part.split()
-                if len(date_time) >= 2:
-                    date_str = date_time[0]  # Keep as text
-                    time_str = date_time[1]  # Keep as text
-                    return date_str, time_str
+            # If cell B4 doesn't have timestamp, try to extract from filename
+            # Format: "XX Document Listing DDMMYY.xlsx"
+            filename = Path(file_path).name
+            # Look for 6-digit date pattern (DDMMYY)
+            date_match = re.search(r'(\d{6})(?:\.xlsx)?$', filename)
+            if date_match:
+                date_str = date_match.group(1)
+                try:
+                    # Parse DDMMYY format
+                    date_obj = datetime.strptime(date_str, '%d%m%y')
+                    # Default time to 12:00 for filename-based timestamps
+                    return date_obj.strftime('%d-%b-%Y'), '12:00'
+                except ValueError as e:
+                    print(f"Warning: Could not parse date from filename '{filename}': {str(e)}")
+                    return None, None
             
             print(f"Warning: Could not parse timestamp from {file_path.name}")
             return None, None

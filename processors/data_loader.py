@@ -58,6 +58,17 @@ def process_csv_file(file_path, config):
             except ImportError:
                 print("Warning: Could not import Holloway Park status mapping function")
         
+        # Apply custom status mapping for West Cromwell Road
+        if config.get('PROJECT_TITLE') == 'West Cromwell Road':
+            try:
+                from configs.WestCromwellRoad import map_wcr_status
+                if 'Full Path' in df.columns:
+                    # Apply the custom status mapping function to each row
+                    df['Status'] = df.apply(map_wcr_status, axis=1)
+                    print("Applied custom West Cromwell Road status mapping")
+            except ImportError:
+                print("Warning: Could not import West Cromwell Road status mapping function")
+        
         # Clean revision column
         if 'Rev' in df.columns:
             df['Rev'] = df['Rev'].apply(clean_revision)
@@ -102,6 +113,26 @@ def load_document_listing(file_path, config):
                 for target_col, source_col in column_mappings.items():
                     if source_col in df.columns:
                         df[target_col] = df[source_col]
+            
+            # Apply custom status mapping for Holloway Park (Excel files)
+            if config.get('PROJECT_TITLE') == 'Holloway Park':
+                try:
+                    from configs.HollowayPark import map_holloway_park_status
+                    if 'Status' in df.columns or 'Design Status' in df.columns:
+                        df['Status'] = df.apply(map_holloway_park_status, axis=1)
+                        print("Applied custom Holloway Park status mapping")
+                except ImportError:
+                    print("Warning: Could not import Holloway Park status mapping function")
+            
+            # Apply custom status mapping for West Cromwell Road (Excel files)
+            if config.get('PROJECT_TITLE') == 'West Cromwell Road':
+                try:
+                    from configs.WestCromwellRoad import map_wcr_status
+                    if 'Full Path' in df.columns:
+                        df['Status'] = df.apply(map_wcr_status, axis=1)
+                        print("Applied custom West Cromwell Road status mapping")
+                except ImportError:
+                    print("Warning: Could not import West Cromwell Road status mapping function")
             
             # Clean revision column for Excel files (CSV already cleaned in process_csv_file)
             if 'Rev' in df.columns:
