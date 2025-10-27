@@ -106,8 +106,11 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
     # Get accommodation data for accurate counts
     accom_data = config.get('ACCOMMODATION_DATA', {})
     
+    # Get project structure for phase/block metadata
+    project_structure = config.get('PROJECT_STRUCTURE', {})
+    
     # Get summary statistics (will use accommodation data if available)
-    summary = get_apartment_certificate_summary(categorized, apartment_certs, cert_tracking, accom_data)
+    summary = get_apartment_certificate_summary(categorized, apartment_certs, cert_tracking, accom_data, project_structure)
     
     # Calculate end column based on max blocks (E + max_blocks_per_phase + 2 for spacing)
     end_col = 5 + max_blocks_per_phase + 2  # Start at E (5), add blocks, add 2 for spacing

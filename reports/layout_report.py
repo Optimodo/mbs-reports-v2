@@ -651,9 +651,12 @@ def save_layout_report(latest_data, output_file, config):
         # Get accommodation data
         accommodation_data = config.get('ACCOMMODATION_DATA', {})
         
+        # Get project structure
+        project_structure = config.get('PROJECT_STRUCTURE', {})
+        
         # Get layout tracking summary
         print("📊 Analyzing layout drawings...")
-        layout_summary = get_layout_tracking_summary(latest_data, layout_tracking, accommodation_data)
+        layout_summary = get_layout_tracking_summary(latest_data, layout_tracking, accommodation_data, project_structure)
         
         if not layout_summary or layout_summary.get('total_layouts', 0) == 0:
             print("⚠️  No layout drawings found")

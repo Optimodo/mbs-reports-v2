@@ -116,6 +116,7 @@ def load_project_config(project_name, input_file=None):
         'APARTMENT_LAYOUT_TRACKING': module.APARTMENT_LAYOUT_TRACKING if hasattr(module, 'APARTMENT_LAYOUT_TRACKING') else DEFAULT_SETTINGS.get('APARTMENT_LAYOUT_TRACKING', {}),
         'DRAWING_SETTINGS': module.DRAWING_SETTINGS if hasattr(module, 'DRAWING_SETTINGS') else DEFAULT_SETTINGS.get('DRAWING_SETTINGS', {}),
         'TECHNICAL_SUBMITTAL_SETTINGS': module.TECHNICAL_SUBMITTAL_SETTINGS if hasattr(module, 'TECHNICAL_SUBMITTAL_SETTINGS') else DEFAULT_SETTINGS.get('TECHNICAL_SUBMITTAL_SETTINGS', {}),
+        'PROJECT_STRUCTURE': module.PROJECT_STRUCTURE if hasattr(module, 'PROJECT_STRUCTURE') else DEFAULT_SETTINGS.get('PROJECT_STRUCTURE', {}),
         'PROJECT_TITLE': getattr(module, 'PROJECT_TITLE', project_name),
         'MBS_FILTER': module.MBS_FILTER if hasattr(module, 'MBS_FILTER') else None,
         'COLUMN_MAPPINGS': module.COLUMN_MAPPINGS if hasattr(module, 'COLUMN_MAPPINGS') else None,

@@ -439,7 +439,8 @@ def get_overall_progress(progress_stats: Dict) -> Dict:
 
 
 def calculate_progress_by_phase_block(categorized_df: pd.DataFrame, tracking_config: Dict, 
-                                      full_tracking_config: Dict, accommodation_data: Dict = None) -> Dict:
+                                      full_tracking_config: Dict, accommodation_data: Dict = None,
+                                      project_structure: Dict = None) -> Dict:
     """
     Calculate progress broken down by phase and block.
     
@@ -447,34 +448,31 @@ def calculate_progress_by_phase_block(categorized_df: pd.DataFrame, tracking_con
         categorized_df: DataFrame with categorized documents (must include 'phase' and 'block' columns)
         tracking_config: Configuration dictionary with category definitions
         full_tracking_config: Full tracking configuration including phases definition
-        accommodation_data: Accommodation data from config (optional, provides accurate counts)
+        accommodation_data: Accommodation data from config (provides accurate apartment counts)
+        project_structure: Project structure from config (provides phase/block metadata)
         
     Returns:
         Dictionary with progress statistics by phase and block
     """
     phase_block_progress = {}
     
-    # Prefer accommodation data phases if available
-    if accommodation_data and 'phases' in accommodation_data:
-        phases_source = accommodation_data['phases']
-        using_accom_data = True
-    else:
-        phases_source = full_tracking_config.get('phases', {})
-        using_accom_data = False
-    
-    if not phases_source:
+    # Use accommodation data for phase list and apartment counts
+    if not accommodation_data or 'phases' not in accommodation_data:
         return phase_block_progress
+    
+    phases_source = accommodation_data['phases']
     
     # Calculate progress for each phase
     for phase_id, phase_config in phases_source.items():
-        if using_accom_data:
-            phase_display = f"Phase {phase_id}"
-            phase_apartment_count = phase_config.get('apartment_count', 0)
-            phase_blocks = phase_config.get('blocks', [])  # blocks is already a list in accommodation data
+        # Get apartment count from accommodation data
+        phase_apartment_count = phase_config.get('apartment_count', 0)
+        phase_blocks = phase_config.get('blocks', {})  # blocks is a dict in accommodation data
+        
+        # Get display name from PROJECT_STRUCTURE if available, otherwise use default
+        if project_structure and 'phases' in project_structure and phase_id in project_structure['phases']:
+            phase_display = project_structure['phases'][phase_id].get('display_name', f"Phase {phase_id}")
         else:
-            phase_display = phase_config.get('display_name', phase_id)
-            phase_apartment_count = phase_config.get('apartment_count', 0)
-            phase_blocks = phase_config.get('blocks', [])
+            phase_display = f"Phase {phase_id}"
         
         # Filter documents for this phase
         phase_docs = categorized_df[categorized_df['phase'] == phase_id]
@@ -495,8 +493,9 @@ def calculate_progress_by_phase_block(categorized_df: pd.DataFrame, tracking_con
             }
         
         # Calculate progress for each block in this phase
+        # phase_blocks is a dict where keys are block IDs
         block_stats = {}
-        for block_id in phase_blocks:
+        for block_id in phase_blocks.keys():
             block_docs = phase_docs[phase_docs['block'] == block_id]
             
             block_stats[block_id] = {}
@@ -522,7 +521,8 @@ def calculate_progress_by_phase_block(categorized_df: pd.DataFrame, tracking_con
 
 
 def get_apartment_certificate_summary(categorized_df: pd.DataFrame, tracking_config: Dict, 
-                                      full_tracking_config: Dict = None, accommodation_data: Dict = None) -> Dict:
+                                      full_tracking_config: Dict = None, accommodation_data: Dict = None,
+                                      project_structure: Dict = None) -> Dict:
     """
     Get detailed summary of apartment certificate progress.
     
@@ -530,6 +530,8 @@ def get_apartment_certificate_summary(categorized_df: pd.DataFrame, tracking_con
         categorized_df: DataFrame with categorized documents
         tracking_config: Configuration dictionary
         full_tracking_config: Full tracking configuration including phase/block definitions (optional)
+        accommodation_data: Accommodation data from config (provides apartment counts)
+        project_structure: Project structure from config (provides phase/block metadata)
         
     Returns:
         Dictionary with detailed apartment certificate summary
@@ -551,7 +553,7 @@ def get_apartment_certificate_summary(categorized_df: pd.DataFrame, tracking_con
             continue
         
         # Group by apartment number
-        apartment_groups = category_docs.groupby('apartment_number').size()
+        apartment_groups = categorized_df[categorized_df['category'] == category_name].groupby('apartment_number').size()
         
         apartment_details[category_name] = {
             'apartments_with_docs': sorted(apartment_groups.index.tolist()),
@@ -563,7 +565,7 @@ def get_apartment_certificate_summary(categorized_df: pd.DataFrame, tracking_con
     phase_block_progress = {}
     if full_tracking_config:
         phase_block_progress = calculate_progress_by_phase_block(
-            categorized_df, tracking_config, full_tracking_config, accommodation_data
+            categorized_df, tracking_config, full_tracking_config, accommodation_data, project_structure
         )
     
     return {
@@ -1023,21 +1025,23 @@ def calculate_communal_layout_progress(categorized_df: pd.DataFrame,
     if communal_layouts.empty:
         return {}
     
-    # Use hardcoded floor counts from config if available, otherwise fall back to accommodation data
+    # Use floor counts from PROJECT_STRUCTURE if available, otherwise fall back to accommodation data
     expected_floors_by_block = {}
     all_expected_floors = set()
     
-    # Check if hardcoded floor counts are provided in config
-    hardcoded_floors = layout_tracking_config.get('categories', {}).get('communal_layouts', {}).get('expected_floors_by_block', {})
+    # Check if PROJECT_STRUCTURE has block floor definitions
+    project_structure = layout_tracking_config.get('project_structure', {})
+    blocks_config = project_structure.get('blocks', {})
     
-    if hardcoded_floors:
-        # Use hardcoded floor counts as base (no ground floor 0, no roof floors)
-        for block_name, floors_list in hardcoded_floors.items():
-            expected_floors_by_block[block_name] = set(floors_list)
-            all_expected_floors.update(floors_list)
+    if blocks_config:
+        # Use PROJECT_STRUCTURE floor definitions
+        for block_name, block_data in blocks_config.items():
+            floors_list = block_data.get('expected_floors', [])
+            if floors_list:
+                expected_floors_by_block[block_name] = set(floors_list)
+                all_expected_floors.update(floors_list)
         
-        # Use hardcoded floors as-is - do not add ground or roof floors
-        # Ground and roof floors are only counted if they exist in documents, but never expected
+        # Use defined floors as-is - ground (0) and roof floors only counted if detected, never expected
     else:
         # Fall back to accommodation data (old logic)
         if accommodation_data and 'phases' in accommodation_data:
@@ -1182,7 +1186,7 @@ def extract_blocks_from_title(doc_title: str) -> List[str]:
 
 
 def get_layout_tracking_summary(latest_data: pd.DataFrame, layout_tracking_config: Dict,
-                                accommodation_data: Dict = None) -> Dict:
+                                accommodation_data: Dict = None, project_structure: Dict = None) -> Dict:
     """
     Main entry point for layout tracking analysis.
     
@@ -1190,12 +1194,18 @@ def get_layout_tracking_summary(latest_data: pd.DataFrame, layout_tracking_confi
         latest_data: DataFrame of latest documents
         layout_tracking_config: Layout tracking configuration
         accommodation_data: Accommodation schedule data
+        project_structure: Project structure (phases, blocks, expected floors)
         
     Returns:
         Dictionary with complete layout tracking summary
     """
     if latest_data.empty or not layout_tracking_config.get('enabled', False):
         return {}
+    
+    # Inject project_structure into layout_tracking_config for use by sub-functions
+    if project_structure:
+        layout_tracking_config = layout_tracking_config.copy()
+        layout_tracking_config['project_structure'] = project_structure
     
     # Filter to only layout drawings based on detection patterns
     detection = layout_tracking_config.get('detection', {})
