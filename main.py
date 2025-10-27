@@ -111,7 +111,7 @@ def get_report_type_selection():
     """Get report type selection from user.
     
     Returns:
-        str: Report type ('summary', 'progression', 'condensed', 'certificates') or None if cancelled
+        str: Report type ('summary', 'progression', 'condensed', 'certificates', 'layouts') or None if cancelled
     """
     print("\n" + "="*60)
     print("Select Report Type:")
@@ -120,19 +120,21 @@ def get_report_type_selection():
     print("2. Detailed Progression Report")
     print("3. Condensed Progression Report")
     print("4. Certificate Report")
-    print("5. Cancel")
+    print("5. Layout Tracking Report")
+    print("6. Cancel")
     print("="*60)
     
-    choice = input("\nEnter your choice (1-5): ").strip()
+    choice = input("\nEnter your choice (1-6): ").strip()
     
     report_map = {
         '1': 'summary',
         '2': 'progression',
         '3': 'condensed',
-        '4': 'certificates'
+        '4': 'certificates',
+        '5': 'layouts'
     }
     
-    if choice == '5':
+    if choice == '6':
         return None
     
     return report_map.get(choice)
@@ -468,6 +470,44 @@ def generate_certificate_report_full(project_name, config, output_dir, db):
         return False
 
 
+def generate_layout_report_full(project_name, config, output_dir, db):
+    """Generate layout tracking report for a project.
+    
+    Args:
+        project_name: Name of the project
+        config: Project configuration
+        output_dir: Output directory path
+        db: Database connection
+        
+    Returns:
+        bool: True if successful
+    """
+    from reports.layout_report import save_layout_report
+    
+    layout_tracking = config.get('APARTMENT_LAYOUT_TRACKING', {})
+    
+    if not layout_tracking.get('enabled', False):
+        print(f"  ℹ Layout tracking not enabled for this project")
+        return False
+    
+    # Get latest documents
+    latest_data_df = db.get_latest_documents(project_name)
+    
+    if latest_data_df.empty:
+        print(f"  ℹ No data found")
+        return False
+    
+    project_slug = slugify(project_name)
+    layout_output = output_dir / f"{project_slug}_layouts.xlsx"
+    
+    if save_layout_report(latest_data_df, layout_output, config):
+        print(f"  ✓ Layout tracking report: {layout_output}")
+        return True
+    else:
+        print(f"  ✗ Failed to save layout tracking report")
+        return False
+
+
 def process_single_project_all_reports(project_name):
     """Generate all reports for a single project.
     
@@ -512,6 +552,10 @@ def process_single_project_all_reports(project_name):
             
             # 4. Certificate Report (if enabled)
             generate_certificate_report_full(project_name, config, output_dir, db)
+            
+            # 5. Layout Tracking Report (if enabled)
+            if not generate_layout_report_full(project_name, config, output_dir, db):
+                success = False
             
             if success:
                 print(f"\n✓ All reports completed for {project_name}")
@@ -651,6 +695,12 @@ def generate_specific_report_for_projects(report_type, project_names):
                 
                 elif report_type == 'certificates':
                     if generate_certificate_report_full(project_name, config, output_dir, db):
+                        success_count += 1
+                    else:
+                        skipped_count += 1
+                
+                elif report_type == 'layouts':
+                    if generate_layout_report_full(project_name, config, output_dir, db):
                         success_count += 1
                     else:
                         skipped_count += 1

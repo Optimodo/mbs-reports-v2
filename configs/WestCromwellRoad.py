@@ -86,7 +86,7 @@ STATUS_MAPPINGS = {
         'display_name': 'Status A (Approved)',
         'color': '25E82C',  # Green
         'statuses': [
-            'EA+DM - Status A',
+            'EA+DM - Status A'
         ],
         'description': 'Approved documents - ready to proceed'
     },
@@ -115,6 +115,8 @@ STATUS_MAPPINGS = {
             'Under DC Review',
             'Yes - Proceed to EA Review',
             'Yes - Proceed to Consultant Review',
+            'Under ACL DM Review',
+            'Yes - Proceed to DM Review',
             'QA Approved'
         ],
         'description': 'Documents currently under review'

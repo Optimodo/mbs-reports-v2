@@ -14,7 +14,14 @@ from .document_tracker import (
     calculate_category_progress,
     calculate_progress_by_phase_block,
     get_overall_progress,
-    get_apartment_certificate_summary
+    get_apartment_certificate_summary,
+    # Layout tracking functions
+    extract_apartment_types,
+    extract_floor_coverage,
+    categorize_layouts,
+    calculate_apartment_layout_progress,
+    calculate_communal_layout_progress,
+    get_layout_tracking_summary
 )
 
 __all__ = [
@@ -29,6 +36,13 @@ __all__ = [
     'calculate_category_progress',
     'calculate_progress_by_phase_block',
     'get_overall_progress',
-    'get_apartment_certificate_summary'
+    'get_apartment_certificate_summary',
+    # Layout tracking
+    'extract_apartment_types',
+    'extract_floor_coverage',
+    'categorize_layouts',
+    'calculate_apartment_layout_progress',
+    'calculate_communal_layout_progress',
+    'get_layout_tracking_summary'
 ]
 

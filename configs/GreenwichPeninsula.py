@@ -118,7 +118,7 @@ DRAWING_SETTINGS = {
         'column_name': 'Doc Ref',
         'drawing_patterns': ['DR', 'SC']  # 2-letter codes to match in Doc Ref
     }
-}
+} 
 
 # Certificate Settings
 CERTIFICATE_SETTINGS = {
@@ -1243,5 +1243,146 @@ ACCOMMODATION_DATA = {
         474: {'phase': '18.03', 'block': 'F', 'floor': 9, 'type': '36a', 'bedrooms': 1, 'tenure': 'Affordable Rent'},
         475: {'phase': '18.03', 'block': 'F', 'floor': 9, 'type': '37a', 'bedrooms': 2, 'tenure': 'Affordable Rent'},
         476: {'phase': '18.03', 'block': 'F', 'floor': 9, 'type': '39a', 'bedrooms': 2, 'tenure': 'Affordable Rent'},
+    }
+}
+
+# Apartment Layout Tracking Configuration
+APARTMENT_LAYOUT_TRACKING = {
+    'enabled': True,
+    
+    'detection': {
+        'file_type_patterns': ['DR'],  # Drawing file type
+        'doc_ref_patterns': [],  # Add doc ref patterns if needed
+        'exclude_patterns': ['Schedule', 'Detail', 'Section', 'Elevation'],
+    },
+    
+    'categories': {
+        'apartment_layouts': {
+            'enabled': True,
+            
+            'layout_types': {
+                'ventilation': {
+                    'display_name': 'Ventilation Apartment Layout',
+                    'patterns': ['Ventilation Apartment Layout'],
+                    'doc_ref_patterns': [],  # Add specific doc ref patterns if needed
+                    'required': True,
+                    'description': 'Ventilation apartment layout'
+                },
+                'drainage': {
+                    'display_name': 'Drainage & Domestic Services Apartment Layout',
+                    'patterns': ['Drainage and Domestic Services Layout Apartment'],
+                    'doc_ref_patterns': [],  # Add specific doc ref patterns if needed
+                    'required': True,
+                    'description': 'Drainage and domestic services apartment layout'
+                },
+                'kitchen_electrical': {
+                    'display_name': 'Kitchen Electrical Setting Out',
+                    'patterns': ['Kitchen Electrical Setting Out - Type'],
+                    'doc_ref_patterns': [],  # Add specific doc ref patterns if needed
+                    'required': True,
+                    'description': 'Kitchen electrical setting out layout'
+                },
+            },
+            
+            'apartment_type_detection': {
+                'title_patterns': [
+                    # First extract the "TYPE XX ..." section, then find all type codes in it
+                    # This handles: "TYPE 5", "TYPE 5 & 5A", "TYPE 30A Plot 123", etc.
+                    # Pattern captures everything after TYPE until PLOT, Block (not followed by &), or end
+                    r'TYPE\s+([0-9]+[A-Za-z]?(?:\s*[&,]\s*[0-9]+[A-Za-z]?)*)',
+                ],
+                'doc_ref_patterns': [
+                    r'-TYPE-([A-Z0-9]+[a-z]?)-',
+                    r'-T([A-Z0-9]+[a-z]?)-'
+                ],
+                'path_patterns': [
+                    r'\\Type\s+([A-Z0-9]+[a-z]?)\\',
+                    r'\\([A-Z0-9]+[a-z]?)\s+Type\\'
+                ]
+            }
+        },
+        
+        'communal_layouts': {
+            'enabled': True,
+            # Hardcoded floor counts per block to avoid guesswork from poor naming conventions
+            # Base range excludes ground (0) and roof floors - these are only added if detected in layouts
+            'expected_floors_by_block': {
+                'A': list(range(1, 30)),
+                'B': list(range(1, 10)),
+                'C': list(range(1, 4)),
+                'D': list(range(1, 4)),
+                'E': list(range(1, 22)),
+                'F': list(range(1, 10)),
+                'G': list(range(1, 7)),
+            },
+            'layout_types': {
+                'mechanical_services': {
+                    'display_name': 'Mechanical Services Layout',
+                    'patterns': ['Mechanical services layout'],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Mechanical services communal layout'
+                },
+                'communal_lighting_power': {
+                    'display_name': 'Communal Lighting & Small Power Layout',
+                    'patterns': ['COMMUNAL LIGHTING & SMALL POWER LAYOUT'],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Communal lighting and small power layout'
+                },
+                'above_ground_foul_rainwater': {
+                    'display_name': 'Above Ground Foul & Rainwater Drainage Layout',
+                    'patterns': ['ABOVE GROUND FOUL & RAINWATER DRAINAGE LAYOUT'],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Above ground foul and rainwater drainage layout'
+                },
+                'electrical_services': {
+                    'display_name': 'Electrical Services Layout',
+                    'patterns': [
+                        'Electrical services layout',
+                        'APARTMENT ELECTRICAL SERVICES RCP AND SMALL POWER',
+                        'APARTMENT ELECTRICAL SERVICES RCP'
+                    ],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Electrical services communal layout'
+                },
+                'underfloor_heating': {
+                    'display_name': 'Underfloor Heating Layout',
+                    'patterns': ['UNDERFLOOR HEATING LAYOUT'],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Underfloor heating communal layout'
+                },
+                'mep_combined_services': {
+                    'display_name': 'MEP Combined Services Layout',
+                    'patterns': ['MEP Combined Services'],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'MEP (Mechanical, Electrical, Plumbing) combined services layout'
+                }
+            },
+            'coverage_detection': {
+                'floor_patterns': [
+                    r'Level\s+(\d+)',  # Single level: "Level 01", "Level 15"
+                    r'Level\s+(\d+)-(\d+)',  # Range: "Level 20-29"
+                    r'Level\s+(\d+)\s+to\s+(\d+)',  # Range: "Level 02 to 06"
+                    r'Level\s+(\d+)\s*&\s*(\d+)',  # Multiple single levels: "Level 15 & 16"
+                    r'Level\s+(\d+)-(\d+)\s*&\s*(\d+)',  # Range & single: "Level 03-13 & 14"
+                    r'Level\s+(\d+)\s*&\s*Roof',  # Single level & roof: "Level 06 & ROOF"
+                    r'Levels\s+(\d+),\s*(\d+)\s*&\s*Roof',  # Multiple levels & roof: "LEVELS 08, 09 & ROOF"
+                    r'Ground Floor',  # Ground floor
+                    r'Roof Level',  # Roof level
+                    r'Level\s+00',  # Ground floor as level 00
+                    # Underfloor heating specific patterns
+                    r'TO\s+FLOOR\s+(\d+)',  # "TO FLOOR 09"
+                    r'TO\s+FLOOR\s+(\d+)-(\d+)',  # "TO FLOOR 02-14"
+                    r'TO\s+FLOOR\s+(\d+)\s*-\s*(\d+)',  # "TO FLOOR 02 - 08" (with spaces)
+                    r'TO\s+FIRST\s+FLOOR',  # "TO FIRST FLOOR" (maps to floor 1)
+                    r'TO\s+GROUND\s+FLOOR',  # "TO GROUND FLOOR" (maps to floor 0)
+                ]
+            }
+        }
     }
 }

@@ -572,3 +572,694 @@ def get_apartment_certificate_summary(categorized_df: pd.DataFrame, tracking_con
         'apartment_details': apartment_details,
         'phase_block_progress': phase_block_progress
     }
+
+
+# =============================================================================
+# LAYOUT TRACKING FUNCTIONS
+# =============================================================================
+
+def extract_apartment_types(doc_title: str, doc_ref: str = "", doc_path: str = "", 
+                           type_patterns: Dict = None) -> List[str]:
+    """
+    Extract ALL apartment types from document metadata.
+    
+    Handles multiple types on single drawings (e.g., "TYPE 5 & 5A").
+    
+    Args:
+        doc_title: Document title
+        doc_ref: Document reference (optional)
+        doc_path: Document path (optional)
+        type_patterns: Dictionary of detection patterns from config
+        
+    Returns:
+        List of apartment type codes found (may be empty)
+    """
+    if pd.isna(doc_title):
+        doc_title = ""
+    if pd.isna(doc_ref):
+        doc_ref = ""
+    if pd.isna(doc_path):
+        doc_path = ""
+    
+    if not type_patterns:
+        return []
+    
+    found_types = []
+    
+    # Try title patterns - find ALL matches, not just first
+    for pattern in type_patterns.get('title_patterns', []):
+        matches = re.findall(pattern, doc_title, re.IGNORECASE)
+        for match in matches:
+            # The match might be a string like "5 & 5A" or "30" or "1A"
+            # Extract individual type codes from it
+            type_codes = re.findall(r'\b([0-9]+[A-Za-z]?)\b', match)
+            found_types.extend([code.upper() for code in type_codes])
+    
+    # Try doc ref patterns
+    for pattern in type_patterns.get('doc_ref_patterns', []):
+        matches = re.findall(pattern, doc_ref, re.IGNORECASE)
+        for match in matches:
+            type_codes = re.findall(r'\b([0-9]+[A-Za-z]?)\b', match)
+            found_types.extend([code.upper() for code in type_codes])
+    
+    # Try path patterns
+    for pattern in type_patterns.get('path_patterns', []):
+        matches = re.findall(pattern, doc_path, re.IGNORECASE)
+        for match in matches:
+            type_codes = re.findall(r'\b([0-9]+[A-Za-z]?)\b', match)
+            found_types.extend([code.upper() for code in type_codes])
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_types = []
+    for t in found_types:
+        if t not in seen:
+            seen.add(t)
+            unique_types.append(t)
+    
+    return unique_types
+
+
+def extract_floor_coverage(doc_title: str, doc_ref: str = "", doc_path: str = "",
+                           floor_patterns: List[str] = None) -> List[int]:
+    """
+    Extract floor coverage from document (for communal layouts).
+    
+    Handles both single floors and multi-floor ranges (e.g., "Levels 04-08").
+    
+    Args:
+        doc_title: Document title
+        doc_ref: Document reference
+        doc_path: Document path
+        floor_patterns: List of regex patterns to detect floors
+        
+    Returns:
+        List of floor numbers covered by this document
+    """
+    if pd.isna(doc_title):
+        doc_title = ""
+    if pd.isna(doc_ref):
+        doc_ref = ""
+    if pd.isna(doc_path):
+        doc_path = ""
+    
+    if not floor_patterns:
+        return []
+    
+    search_text = f"{doc_title} {doc_ref} {doc_path}"
+    floors = set()
+    
+    # Handle special floor keywords first
+    if re.search(r'Ground Floor', search_text, re.IGNORECASE):
+        floors.add(0)
+    if re.search(r'TO GROUND FLOOR', search_text, re.IGNORECASE):
+        floors.add(0)
+    if re.search(r'TO FIRST FLOOR', search_text, re.IGNORECASE):
+        floors.add(1)
+    # Note: Roof levels are not tracked numerically - they appear as "RF" in doc refs
+    
+    # Process complex patterns
+    for pattern in floor_patterns:
+        # Skip special floor patterns (already handled above)
+        if 'Ground Floor' in pattern or 'Roof Level' in pattern:
+            continue
+            
+        matches = list(re.finditer(pattern, search_text, re.IGNORECASE))
+        
+        for match in matches:
+            groups = match.groups()
+            
+            # Handle different pattern types based on number of capture groups
+            if len(groups) == 1:
+                # Single floor: "Level 01"
+                try:
+                    floors.add(int(groups[0]))
+                except (ValueError, IndexError):
+                    pass
+                    
+            elif len(groups) == 2:
+                # Range: "Level 20-29" or "Level 15 & 16"
+                try:
+                    first = int(groups[0])
+                    second = int(groups[1])
+                    
+                    if '-' in match.group(0) or ' to ' in match.group(0).lower():
+                        # Range pattern: 20-29 or "02 to 06"
+                        floors.update(range(first, second + 1))
+                    else:
+                        # Multiple singles: 15 & 16
+                        floors.update([first, second])
+                except (ValueError, IndexError):
+                    pass
+                    
+            elif len(groups) == 3:
+                # Complex pattern: "Level 03-13 & 14" or "LEVELS 08, 09 & ROOF"
+                try:
+                    first = int(groups[0])
+                    second = int(groups[1])
+                    third = int(groups[2])
+                    
+                    if 'LEVELS' in match.group(0).upper():
+                        # Multiple singles: "LEVELS 08, 09 & ROOF"
+                        floors.update([first, second])
+                        # Note: ROOF is not tracked numerically
+                    else:
+                        # Range + single: "Level 03-13 & 14"
+                        floors.update(range(first, second + 1))
+                        floors.add(third)
+                except (ValueError, IndexError):
+                    pass
+    
+    return sorted(list(floors))
+
+
+def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
+                      accommodation_data: Dict = None) -> pd.DataFrame:
+    """
+    Categorize layout drawings based on tracking configuration.
+    
+    Similar to categorize_documents but specifically for layouts:
+    - Apartment layouts: categorized by TYPE (not individual apartments)
+    - Communal layouts: categorized by coverage (floor/multi-floor/building)
+    - HANDLES MULTIPLE TYPES PER DOCUMENT by creating duplicate rows
+    
+    Args:
+        df: DataFrame of filtered layout documents
+        layout_tracking_config: Layout tracking configuration
+        accommodation_data: Accommodation data for validation
+        
+    Returns:
+        DataFrame with added columns: category, layout_type, apartment_type, 
+        floor_coverage, block, phase
+        Note: May have MORE rows than input if documents cover multiple types
+    """
+    if df.empty:
+        return df.copy()
+    
+    # Track which documents have been categorized
+    categorized_indices = set()
+    expanded_rows = []
+    
+    # Process apartment layouts
+    apartment_config = layout_tracking_config.get('categories', {}).get('apartment_layouts', {})
+    if apartment_config.get('enabled', False):
+        layout_types = apartment_config.get('layout_types', {})
+        type_detection = apartment_config.get('apartment_type_detection', {})
+        
+        for layout_key, layout_config in layout_types.items():
+            # Match documents for this layout type
+            patterns = layout_config.get('patterns', [])
+            doc_ref_patterns = layout_config.get('doc_ref_patterns', [])
+            
+            mask = pd.Series([False] * len(df), index=df.index)
+            
+            # Check title patterns
+            for pattern in patterns:
+                mask |= df['Doc Title'].fillna('').str.contains(pattern, case=False, na=False, regex=False)
+            
+            # Check doc ref patterns
+            for pattern in doc_ref_patterns:
+                mask |= df['Doc Ref'].fillna('').str.contains(pattern, case=False, na=False, regex=True)
+            
+            # For matching documents, extract ALL apartment types
+            for idx in df[mask].index:
+                apt_types = extract_apartment_types(
+                    df.loc[idx, 'Doc Title'],
+                    df.loc[idx, 'Doc Ref'] if 'Doc Ref' in df.columns else "",
+                    df.loc[idx, 'Doc Path'] if 'Doc Path' in df.columns else "",
+                    type_detection
+                )
+                
+                # Create one row per apartment type found
+                if apt_types:
+                    categorized_indices.add(idx)  # Mark as categorized
+                    for apt_type in apt_types:
+                        row_dict = df.loc[idx].to_dict()
+                        row_dict['category'] = 'apartment'
+                        row_dict['layout_type'] = layout_key
+                        row_dict['apartment_type'] = apt_type
+                        row_dict['floor_coverage'] = None
+                        row_dict['block'] = None
+                        row_dict['phase'] = None
+                        expanded_rows.append(row_dict)
+    
+    # Process communal layouts (not expanded for now)
+    communal_config = layout_tracking_config.get('categories', {}).get('communal_layouts', {})
+    if communal_config.get('enabled', False):
+        layout_types = communal_config.get('layout_types', {})
+        coverage_detection = communal_config.get('coverage_detection', {})
+        
+        for layout_key, layout_config in layout_types.items():
+            patterns = layout_config.get('patterns', [])
+            doc_ref_patterns = layout_config.get('doc_ref_patterns', [])
+            
+            mask = pd.Series([False] * len(df), index=df.index)
+            
+            # Check title patterns
+            for pattern in patterns:
+                mask |= df['Doc Title'].fillna('').str.contains(pattern, case=False, na=False, regex=False)
+            
+            # Check doc ref patterns
+            for pattern in doc_ref_patterns:
+                mask |= df['Doc Ref'].fillna('').str.contains(pattern, case=False, na=False, regex=True)
+            
+            # For matching documents, extract floor coverage
+            for idx in df[mask].index:
+                floors = extract_floor_coverage(
+                    df.loc[idx, 'Doc Title'],
+                    df.loc[idx, 'Doc Ref'] if 'Doc Ref' in df.columns else "",
+                    df.loc[idx, 'Doc Path'] if 'Doc Path' in df.columns else "",
+                    coverage_detection.get('floor_patterns', [])
+                )
+                
+                # Categorize communal layout
+                categorized_indices.add(idx)  # Mark as categorized
+                row_dict = df.loc[idx].to_dict()
+                row_dict['category'] = 'communal'
+                row_dict['layout_type'] = layout_key
+                row_dict['apartment_type'] = None
+                row_dict['floor_coverage'] = str(floors) if floors else '[]'
+                row_dict['block'] = None
+                row_dict['phase'] = None
+                expanded_rows.append(row_dict)
+    
+    # Add uncategorized documents (those NOT matched by any category)
+    for idx in df.index:
+        if idx not in categorized_indices:
+            row_dict = df.loc[idx].to_dict()
+            row_dict['category'] = None
+            row_dict['layout_type'] = None
+            row_dict['apartment_type'] = None
+            row_dict['floor_coverage'] = None
+            row_dict['block'] = None
+            row_dict['phase'] = None
+            expanded_rows.append(row_dict)
+    
+    # Create result DataFrame from expanded rows
+    result_df = pd.DataFrame(expanded_rows)
+    
+    # Extract phase and block for categorized layouts
+    for idx in result_df[result_df['category'].notna()].index:
+        doc_title = result_df.loc[idx, 'Doc Title']
+        doc_ref = result_df.loc[idx, 'Doc Ref'] if 'Doc Ref' in result_df.columns else ""
+        doc_path = result_df.loc[idx, 'Doc Path'] if 'Doc Path' in result_df.columns else ""
+        
+        # Extract phase (if available in config)
+        phase = extract_phase(doc_title, doc_ref, doc_path, layout_tracking_config)
+        if phase:
+            result_df.loc[idx, 'phase'] = phase
+        
+        # Extract block
+        block = extract_block(doc_title, doc_ref, doc_path, layout_tracking_config)
+        if block:
+            result_df.loc[idx, 'block'] = block
+    
+    return result_df
+
+
+def normalize_type_code(type_code: str) -> str:
+    """
+    Normalize apartment type codes for comparison.
+    
+    Handles:
+    - Case normalization (01a -> 01A)
+    - Leading zero removal (01A -> 1A, but 01a -> 1a)
+    - Returns normalized version for matching
+    
+    Args:
+        type_code: Original type code (e.g., "01a", "1A", "13a")
+        
+    Returns:
+        Normalized type code for comparison
+    """
+    if not type_code:
+        return ""
+    
+    # Convert to uppercase
+    normalized = type_code.upper()
+    
+    # Remove leading zeros from the numeric part
+    # Pattern: optional leading zeros + digits + optional letter
+    import re
+    match = re.match(r'^0*(\d+)([A-Z]?)$', normalized)
+    if match:
+        digits = match.group(1)
+        letter = match.group(2)
+        normalized = digits + letter
+    
+    return normalized
+
+
+def calculate_apartment_layout_progress(categorized_df: pd.DataFrame, 
+                                        layout_tracking_config: Dict,
+                                        accommodation_data: Dict = None) -> Dict:
+    """
+    Calculate progress for apartment layouts.
+    
+    For apartment layouts, we count:
+    - How many apartment TYPES have each layout type
+    - Which apartment types are missing layouts
+    
+    Args:
+        categorized_df: DataFrame with categorized layouts
+        layout_tracking_config: Layout tracking configuration
+        accommodation_data: Accommodation schedule data
+        
+    Returns:
+        Dictionary with progress statistics per layout type
+    """
+    apartment_layouts = categorized_df[categorized_df['category'] == 'apartment']
+    
+    if apartment_layouts.empty:
+        return {}
+    
+    # Get expected apartment types from accommodation data
+    expected_types = set()
+    if accommodation_data and 'apartment_types' in accommodation_data:
+        expected_types = set(accommodation_data['apartment_types'].keys())
+    
+    total_types = len(expected_types) if expected_types else 0
+    
+    # Calculate progress for each layout type
+    apartment_config = layout_tracking_config.get('categories', {}).get('apartment_layouts', {})
+    layout_types_config = apartment_config.get('layout_types', {})
+    
+    progress = {}
+    for layout_key, layout_config in layout_types_config.items():
+        layout_docs = apartment_layouts[apartment_layouts['layout_type'] == layout_key]
+        
+        # Get unique apartment types that have this layout
+        types_with_layout = set(layout_docs['apartment_type'].dropna().unique())
+        
+        # Calculate duplicates: apartment types with more than one layout document
+        type_counts = layout_docs['apartment_type'].dropna().value_counts()
+        duplicate_types = type_counts[type_counts > 1]
+        total_duplicates = (duplicate_types - 1).sum()  # Extra documents beyond the first
+        
+        # Calculate missing types with normalized matching (case + leading zeros)
+        # Create a mapping of normalized -> original for found types
+        found_types_map = {normalize_type_code(t): t for t in types_with_layout}
+        
+        # Check which expected types are missing (normalized matching)
+        missing_types = set()
+        types_matched = set()
+        
+        for expected_type in expected_types:
+            normalized_expected = normalize_type_code(expected_type)
+            if normalized_expected in found_types_map:
+                # Found (normalized match)
+                types_matched.add(expected_type)
+            else:
+                # Missing
+                missing_types.add(expected_type)
+        
+        # Calculate percentage based on matched types (case-insensitive)
+        if total_types > 0:
+            coverage_pct = (len(types_matched) / total_types) * 100
+        else:
+            coverage_pct = 0
+        
+        # Unique document count = total docs - duplicates
+        unique_document_count = len(types_with_layout)
+        
+        progress[layout_key] = {
+            'display_name': layout_config.get('display_name', layout_key),
+            'types_with_layout': len(types_matched),  # Count of matched types (case-insensitive)
+            'types_covered': sorted(list(types_matched)),  # Show expected types that were matched
+            'missing_types': sorted(list(missing_types)),
+            'total_expected_types': total_types,
+            'coverage_percentage': round(coverage_pct, 1),
+            'document_count': len(layout_docs),  # Total documents including duplicates
+            'unique_document_count': unique_document_count,  # Unique apartment types with layouts
+            'duplicate_count': int(total_duplicates),  # Number of alternative/duplicate layouts
+            'duplicate_types': sorted(duplicate_types.index.tolist()) if len(duplicate_types) > 0 else [],
+            'required': layout_config.get('required', False)
+        }
+    
+    return progress
+
+
+def calculate_communal_layout_progress(categorized_df: pd.DataFrame,
+                                       layout_tracking_config: Dict,
+                                       accommodation_data: Dict = None) -> Dict:
+    """
+    Calculate progress for communal layouts.
+    
+    For communal layouts, we count:
+    - Floor coverage for each layout type per block
+    - Which floors/blocks are missing layouts
+    - Handle multi-block layouts and special floors (roof, ground)
+    
+    Args:
+        categorized_df: DataFrame with categorized layouts
+        layout_tracking_config: Layout tracking configuration
+        accommodation_data: Accommodation schedule data
+        
+    Returns:
+        Dictionary with progress statistics per layout type
+    """
+    communal_layouts = categorized_df[categorized_df['category'] == 'communal']
+    
+    if communal_layouts.empty:
+        return {}
+    
+    # Use hardcoded floor counts from config if available, otherwise fall back to accommodation data
+    expected_floors_by_block = {}
+    all_expected_floors = set()
+    
+    # Check if hardcoded floor counts are provided in config
+    hardcoded_floors = layout_tracking_config.get('categories', {}).get('communal_layouts', {}).get('expected_floors_by_block', {})
+    
+    if hardcoded_floors:
+        # Use hardcoded floor counts as base (no ground floor 0, no roof floors)
+        for block_name, floors_list in hardcoded_floors.items():
+            expected_floors_by_block[block_name] = set(floors_list)
+            all_expected_floors.update(floors_list)
+        
+        # Use hardcoded floors as-is - do not add ground or roof floors
+        # Ground and roof floors are only counted if they exist in documents, but never expected
+    else:
+        # Fall back to accommodation data (old logic)
+        if accommodation_data and 'phases' in accommodation_data:
+            for phase_data in accommodation_data['phases'].values():
+                for block_name, block_data in phase_data.get('blocks', {}).items():
+                    floors = set(block_data.get('floors', []))
+                    expected_floors_by_block[block_name] = floors
+                    all_expected_floors.update(floors)
+        
+        # Convert to 1-based floors (exclude ground floor 0)
+        for block_name, floors in expected_floors_by_block.items():
+            if floors:
+                max_floor = max(floors)
+                expected_floors_by_block[block_name] = set(range(1, max_floor + 1))
+        
+        all_expected_floors = set()
+        for floors in expected_floors_by_block.values():
+            all_expected_floors.update(floors)
+    
+    # Add special floors that might not be in accommodation data
+    # Ground floor (0) and roof (max floor + 1) are common for some layout types
+    # But not all communal layouts need ground/roof coverage (e.g., mechanical services)
+    # For now, we'll only add them if they're explicitly in accommodation data
+    # This prevents false "missing" reports for floors that don't need layouts
+    
+    # Calculate progress for each layout type
+    communal_config = layout_tracking_config.get('categories', {}).get('communal_layouts', {})
+    layout_types_config = communal_config.get('layout_types', {})
+    
+    progress = {}
+    for layout_key, layout_config in layout_types_config.items():
+        layout_docs = communal_layouts[communal_layouts['layout_type'] == layout_key]
+        
+        # Track coverage by block
+        coverage_by_block = {}
+        total_missing_floors = set()
+        document_details = []
+        
+        for _, doc in layout_docs.iterrows():
+            # Parse floor coverage from the document
+            floor_coverage_str = doc.get('floor_coverage', '')
+            doc_title = doc.get('Doc Title', '')
+            
+            try:
+                covered_floors = eval(floor_coverage_str) if floor_coverage_str else []
+            except:
+                covered_floors = []
+            
+            # Extract block information from title
+            blocks_covered = extract_blocks_from_title(doc_title)
+            
+            # Store document details
+            doc_info = {
+                'title': doc_title,
+                'blocks': blocks_covered,
+                'floors': covered_floors,
+                'coverage_type': 'multi-block' if len(blocks_covered) > 1 else 'single-block'
+            }
+            document_details.append(doc_info)
+            
+            # Update coverage by block
+            for block in blocks_covered:
+                if block not in coverage_by_block:
+                    coverage_by_block[block] = set()
+                coverage_by_block[block].update(covered_floors)
+        
+        # Calculate missing floors per block and total covered floors
+        total_missing_floors = set()
+        total_covered_count = 0
+        
+        for block_name, expected_floors in expected_floors_by_block.items():
+            covered_in_block = coverage_by_block.get(block_name, set())
+            missing_in_block = expected_floors - covered_in_block
+            total_missing_floors.update(missing_in_block)
+            # Count how many expected floors are covered for this block
+            covered_expected_floors = expected_floors & covered_in_block
+            total_covered_count += len(covered_expected_floors)
+        
+        # Calculate overall percentage using total floor count across all blocks
+        # Each floor in each block counts separately for communal layouts
+        total_expected_floors = sum(len(expected_floors) for expected_floors in expected_floors_by_block.values())
+        
+        if total_expected_floors > 0:
+            coverage_pct = (total_covered_count / total_expected_floors) * 100
+        else:
+            coverage_pct = 100 if total_covered_count > 0 else 0
+        
+        progress[layout_key] = {
+            'display_name': layout_config.get('display_name', layout_key),
+            'floors_covered': total_covered_count,
+            'floors_missing': sorted(list(total_missing_floors)),
+            'total_expected_floors': total_expected_floors,
+            'coverage_percentage': round(coverage_pct, 1),
+            'document_count': len(layout_docs),
+            'coverage_by_block': {block: sorted(list(floors)) for block, floors in coverage_by_block.items()},
+            'expected_floors_by_block': {block: sorted(list(floors)) for block, floors in expected_floors_by_block.items()},
+            'document_details': document_details,
+            'coverage_type': 'block-based'
+        }
+    
+    return progress
+
+
+def extract_blocks_from_title(doc_title: str) -> List[str]:
+    """
+    Extract block names from document title.
+    
+    Handles:
+    - Single blocks: "Block B" -> ["B"]
+    - Multi blocks: "Block G&F" -> ["G", "F"] 
+    - Multi blocks: "Block F&G" -> ["F", "G"]
+    - Plot identifiers: "Plot 18.03" -> ["18.03"]
+    
+    Args:
+        doc_title: Document title
+        
+    Returns:
+        List of block names
+    """
+    import re
+    
+    blocks = []
+    
+    # Pattern to match "Block X" or "Block X&Y" or "Block Y&X"
+    block_pattern = r'Block\s+([A-Z](?:&[A-Z])*)'
+    match = re.search(block_pattern, doc_title, re.IGNORECASE)
+    
+    if match:
+        blocks_str = match.group(1).upper()
+        # Split by & to get individual blocks
+        blocks.extend([block.strip() for block in blocks_str.split('&')])
+    
+    # Pattern to match "Plot X.Y" 
+    plot_pattern = r'Plot\s+([0-9]+\.[0-9]+)'
+    plot_match = re.search(plot_pattern, doc_title, re.IGNORECASE)
+    
+    if plot_match:
+        plot_id = plot_match.group(1)
+        blocks.append(plot_id)
+    
+    return blocks
+
+
+def get_layout_tracking_summary(latest_data: pd.DataFrame, layout_tracking_config: Dict,
+                                accommodation_data: Dict = None) -> Dict:
+    """
+    Main entry point for layout tracking analysis.
+    
+    Args:
+        latest_data: DataFrame of latest documents
+        layout_tracking_config: Layout tracking configuration
+        accommodation_data: Accommodation schedule data
+        
+    Returns:
+        Dictionary with complete layout tracking summary
+    """
+    if latest_data.empty or not layout_tracking_config.get('enabled', False):
+        return {}
+    
+    # Filter to only layout drawings based on detection patterns
+    detection = layout_tracking_config.get('detection', {})
+    
+    mask = pd.Series([False] * len(latest_data), index=latest_data.index)
+    
+    # Filter by file type
+    for file_type in detection.get('file_type_patterns', []):
+        mask |= latest_data['File Type'].fillna('').str.contains(file_type, case=False, na=False)
+    
+    # Filter by doc ref patterns
+    if 'Doc Ref' in latest_data.columns:
+        for pattern in detection.get('doc_ref_patterns', []):
+            mask |= latest_data['Doc Ref'].fillna('').str.contains(pattern, case=False, na=False, regex=True)
+    
+    # Exclude patterns
+    for exclude_pattern in detection.get('exclude_patterns', []):
+        mask &= ~latest_data['Doc Title'].fillna('').str.contains(exclude_pattern, case=False, na=False)
+    
+    layout_drawings = latest_data[mask].copy()
+    
+    if layout_drawings.empty:
+        return {'total_layouts': 0, 'message': 'No layout drawings found'}
+    
+    # CRITICAL: Exclude withdrawn documents
+    # Check multiple columns for withdrawn status
+    withdrawn_mask = pd.Series([False] * len(layout_drawings), index=layout_drawings.index)
+    
+    # Check doc title for "Withdrawn"
+    withdrawn_mask |= layout_drawings['Doc Title'].fillna('').str.contains('Withdrawn', case=False, na=False)
+    
+    # Check status column if it exists
+    if 'Status' in layout_drawings.columns:
+        withdrawn_mask |= layout_drawings['Status'].fillna('').str.contains('Withdrawn', case=False, na=False)
+    
+    # Check purpose of issue if it exists
+    if 'Purpose of Issue' in layout_drawings.columns:
+        withdrawn_mask |= layout_drawings['Purpose of Issue'].fillna('').str.contains('Withdrawn', case=False, na=False)
+    
+    # Count withdrawn for reporting
+    withdrawn_count = withdrawn_mask.sum()
+    
+    # Remove withdrawn documents
+    layout_drawings = layout_drawings[~withdrawn_mask].copy()
+    
+    if layout_drawings.empty:
+        return {'total_layouts': 0, 'withdrawn_count': withdrawn_count, 'message': 'No non-withdrawn layout drawings found'}
+    
+    # Categorize layouts
+    categorized = categorize_layouts(layout_drawings, layout_tracking_config, accommodation_data)
+    
+    # Calculate progress
+    apartment_progress = calculate_apartment_layout_progress(categorized, layout_tracking_config, accommodation_data)
+    communal_progress = calculate_communal_layout_progress(categorized, layout_tracking_config, accommodation_data)
+    
+    # Count uncategorized
+    uncategorized = categorized[categorized['category'].isna()]
+    
+    return {
+        'total_layouts': len(layout_drawings),
+        'withdrawn_count': withdrawn_count,
+        'categorized': len(categorized[categorized['category'].notna()]),
+        'uncategorized': len(uncategorized),
+        'apartment_progress': apartment_progress,
+        'communal_progress': communal_progress,
+        'categorized_data': categorized
+    }
