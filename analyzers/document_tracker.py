@@ -230,6 +230,63 @@ def extract_block(doc_title: str, doc_ref: str, doc_path: str, block_detection_c
     return None
 
 
+def extract_all_blocks(doc_title: str, doc_ref: str, doc_path: str, block_detection_config: Dict) -> List[str]:
+    """
+    Extract ALL building blocks from document metadata (handles F&G, G&F patterns).
+    
+    This function is specifically designed for communal layouts that may apply to multiple blocks.
+    For single-block documents, it behaves like extract_block.
+    For multi-block documents (e.g., "Block F&G"), it returns all applicable blocks.
+    
+    Args:
+        doc_title: Document title
+        doc_ref: Document reference
+        doc_path: Document path
+        block_detection_config: Configuration for block detection patterns
+        
+    Returns:
+        List of block identifiers (may be empty if none found)
+    """
+    if not block_detection_config:
+        return []
+    
+    if pd.isna(doc_title):
+        doc_title = ""
+    if pd.isna(doc_ref):
+        doc_ref = ""
+    if pd.isna(doc_path):
+        doc_path = ""
+    
+    search_text = f"{doc_title} {doc_ref} {doc_path}"
+    blocks_found = set()
+    
+    # Try doc title patterns first (most specific)
+    doc_title_patterns = block_detection_config.get('doc_title_patterns', [])
+    for pattern in doc_title_patterns:
+        matches = list(re.finditer(pattern, doc_title, re.IGNORECASE))
+        for match in matches:
+            block = match.group(1).upper() if match.groups() else match.group(0).upper()
+            blocks_found.add(block)
+    
+    # Try general patterns (collect ALL matches, not just first)
+    patterns = block_detection_config.get('patterns', [])
+    for pattern in patterns:
+        matches = list(re.finditer(pattern, search_text, re.IGNORECASE))
+        for match in matches:
+            block = match.group(1).upper() if match.groups() else match.group(0).upper()
+            blocks_found.add(block)
+    
+    # Special handling for F&G and G&F patterns (Greenwich Peninsula specific)
+    # Look for "Block F&G" or "Block G&F" patterns and ensure both blocks are captured
+    fg_pattern = r'Block\s+([FG])\s*&\s*([FG])\b'
+    fg_match = re.search(fg_pattern, search_text, re.IGNORECASE)
+    if fg_match:
+        blocks_found.add(fg_match.group(1).upper())
+        blocks_found.add(fg_match.group(2).upper())
+    
+    return sorted(list(blocks_found))
+
+
 def categorize_documents(df: pd.DataFrame, tracking_config: Dict, full_tracking_config: Dict = None) -> pd.DataFrame:
     """
     Categorize documents based on tracking configuration.
@@ -820,20 +877,52 @@ def extract_floor_coverage(doc_title: str, doc_ref: str = "", doc_path: str = ""
                     pass
                     
             elif len(groups) == 3:
-                # Complex pattern: "Level 03-13 & 14" or "LEVELS 08, 09 & ROOF"
+                # Complex 3-group patterns
                 try:
                     first = int(groups[0])
                     second = int(groups[1])
                     third = int(groups[2])
                     
-                    if 'LEVELS' in match.group(0).upper():
+                    matched_text = match.group(0).upper()
+                    
+                    if 'LEVELS' in matched_text:
                         # Multiple singles: "LEVELS 08, 09 & ROOF"
                         floors.update([first, second])
                         # Note: ROOF is not tracked numerically
-                    else:
-                        # Range + single: "Level 03-13 & 14"
+                    elif '& ' in matched_text and ' TO ' in matched_text:
+                        # Determine pattern type by position of & and TO
+                        if matched_text.find('&') < matched_text.find(' TO '):
+                            # Single & Range: "Level 01 & 02 to 15" = 1, 2-15
+                            floors.add(first)
+                            floors.update(range(second, third + 1))
+                        else:
+                            # Range & Single: "Level 16 to 19 & 20" = 16-19, 20  
+                            floors.update(range(first, second + 1))
+                            floors.add(third)
+                    elif matched_text.count('&') >= 2:
+                        # Three singles: "Level 01 & 03 & 05" = 1,3,5
+                        floors.update([first, second, third])
+                    elif '-' in matched_text or ' TO ' in matched_text:
+                        # Range + single: "Level 03-13 & 14" = 3-13, 14
                         floors.update(range(first, second + 1))
                         floors.add(third)
+                    else:
+                        # Fallback: treat as three singles
+                        floors.update([first, second, third])
+                except (ValueError, IndexError):
+                    pass
+                    
+            elif len(groups) == 4:
+                # Four-group patterns (all singles)
+                try:
+                    first = int(groups[0])
+                    second = int(groups[1])
+                    third = int(groups[2])
+                    fourth = int(groups[3])
+                    
+                    # Multiple singles: "Level 03 & 05 & 07 AND 09" = 3,5,7,9
+                    # or "Level 01 & 03 & 05 & 07" = 1,3,5,7
+                    floors.update([first, second, third, fourth])
                 except (ValueError, IndexError):
                     pass
     
@@ -930,15 +1019,16 @@ def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
             for pattern in doc_ref_patterns:
                 mask |= df['Doc Ref'].fillna('').str.contains(pattern, case=False, na=False, regex=True)
             
-            # For matching documents, extract floor coverage
+            # For matching documents, extract floor coverage and blocks
             for idx in df[mask].index:
                 doc_title = df.loc[idx, 'Doc Title']
                 doc_ref = df.loc[idx, 'Doc Ref'] if 'Doc Ref' in df.columns else ""
+                doc_path = df.loc[idx, 'Doc Path'] if 'Doc Path' in df.columns else ""
                 
                 floors = extract_floor_coverage(
                     doc_title,
                     doc_ref,
-                    df.loc[idx, 'Doc Path'] if 'Doc Path' in df.columns else "",
+                    doc_path,
                     coverage_detection.get('floor_patterns', [])
                 )
                 
@@ -948,18 +1038,60 @@ def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
                 if layout_config.get('track_sheets', False):
                     current_sheet, total_sheets = extract_sheet_info(doc_title, doc_ref)
                 
-                # Categorize communal layout
+                # Extract all blocks this layout applies to (handles F&G, G&F patterns)
+                block_detection_config = layout_tracking_config.get('block_detection', {})
+                blocks_covered = extract_all_blocks(doc_title, doc_ref, doc_path, block_detection_config)
+                
+                # If no blocks found via extraction, try fallback method
+                if not blocks_covered:
+                    blocks_covered = extract_blocks_from_title(doc_title)
+                
+                # If still no blocks found, create one entry with no block
+                if not blocks_covered:
+                    blocks_covered = [None]
+                
+                # Filter blocks based on actual floor coverage for multi-block layouts
+                # (e.g., Block F&G Level 11 should only apply to Block F, not G, if G doesn't have floor 11)
+                project_structure = layout_tracking_config.get('project_structure', {})
+                blocks_config = project_structure.get('blocks', {})
+                
+                valid_blocks_for_floors = []
+                for block in blocks_covered:
+                    if block is None or not floors:
+                        # No block specified or no floors detected - include as-is
+                        valid_blocks_for_floors.append(block)
+                    elif block in blocks_config:
+                        # Check if this block has all the required floors
+                        expected_floors = set(blocks_config[block].get('expected_floors', []))
+                        layout_floors = set(floors)
+                        
+                        # Only include this block if it has at least some of the layout floors
+                        # (allows for layouts that cover ground/roof floors not in expected_floors)
+                        if expected_floors & layout_floors:  # Intersection is not empty
+                            valid_blocks_for_floors.append(block)
+                        # If no intersection, skip this block (e.g., Block G doesn't have floor 11)
+                    else:
+                        # Block not in structure config - include as-is (backward compatibility)
+                        valid_blocks_for_floors.append(block)
+                
+                # If no valid blocks after filtering, include the original blocks
+                # (prevents losing data if structure config is incomplete)
+                if not valid_blocks_for_floors and blocks_covered:
+                    valid_blocks_for_floors = blocks_covered
+                
+                # Create separate row for each valid block this layout covers
                 categorized_indices.add(idx)  # Mark as categorized
-                row_dict = df.loc[idx].to_dict()
-                row_dict['category'] = 'communal'
-                row_dict['layout_type'] = layout_key
-                row_dict['apartment_type'] = None
-                row_dict['floor_coverage'] = str(floors) if floors else '[]'
-                row_dict['current_sheet'] = current_sheet
-                row_dict['total_sheets'] = total_sheets
-                row_dict['block'] = None
-                row_dict['phase'] = None
-                expanded_rows.append(row_dict)
+                for block in valid_blocks_for_floors:
+                    row_dict = df.loc[idx].to_dict()
+                    row_dict['category'] = 'communal'
+                    row_dict['layout_type'] = layout_key
+                    row_dict['apartment_type'] = None
+                    row_dict['floor_coverage'] = str(floors) if floors else '[]'
+                    row_dict['current_sheet'] = current_sheet
+                    row_dict['total_sheets'] = total_sheets
+                    row_dict['block'] = block
+                    row_dict['phase'] = None
+                    expanded_rows.append(row_dict)
     
     # Add uncategorized documents (those NOT matched by any category)
     for idx in df.index:
@@ -978,10 +1110,9 @@ def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
     # Create result DataFrame from expanded rows
     result_df = pd.DataFrame(expanded_rows)
     
-    # Extract phase and block for categorized layouts
-    block_detection_config = layout_tracking_config.get('block_detection', {})
-    
-    for idx in result_df[result_df['category'].notna()].index:
+    # Extract phase for any layouts that don't have it yet (mainly apartment layouts)
+    # Block extraction is already done during categorization for communal layouts
+    for idx in result_df[(result_df['category'].notna()) & (result_df['phase'].isna())].index:
         doc_title = result_df.loc[idx, 'Doc Title']
         doc_ref = result_df.loc[idx, 'Doc Ref'] if 'Doc Ref' in result_df.columns else ""
         doc_path = result_df.loc[idx, 'Doc Path'] if 'Doc Path' in result_df.columns else ""
@@ -991,10 +1122,12 @@ def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
         if phase:
             result_df.loc[idx, 'phase'] = phase
         
-        # Extract block using proper block_detection config
-        block = extract_block(doc_title, doc_ref, doc_path, block_detection_config)
-        if block:
-            result_df.loc[idx, 'block'] = block
+        # For apartment layouts, also extract block if not already set
+        if result_df.loc[idx, 'category'] == 'apartment' and pd.isna(result_df.loc[idx, 'block']):
+            block_detection_config = layout_tracking_config.get('block_detection', {})
+            block = extract_block(doc_title, doc_ref, doc_path, block_detection_config)
+            if block:
+                result_df.loc[idx, 'block'] = block
     
     return result_df
 

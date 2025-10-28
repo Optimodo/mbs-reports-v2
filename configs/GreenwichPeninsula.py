@@ -381,7 +381,7 @@ APARTMENT_LAYOUT_TRACKING = {
     'enabled': True,
     
     'detection': {
-        'file_type_patterns': ['DR'],  # Drawing file type
+        'file_type_patterns': ['DR - Drawing (DR)'],  # Drawing file type
         'doc_ref_patterns': [],  # Add doc ref patterns if needed
         'exclude_patterns': ['Schedule', 'Detail', 'Section', 'Elevation'],
     },
@@ -488,14 +488,24 @@ APARTMENT_LAYOUT_TRACKING = {
                 'electrical_services': {
                     'display_name': 'Electrical Services Layout',
                     'patterns': [
-                        'Electrical services layout',
+                        'Electrical services layout'  # Only non-RCP electrical services
+                        # Note: RCP patterns moved to separate category below
+                    ],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Electrical services communal layout (non-RCP)',
+                    'greylisted_blocks': ['C', 'D']  
+                },
+                'rcp_electrical': {
+                    'display_name': 'RCP & Electrical Services Layout', 
+                    'patterns': [
                         'APARTMENT ELECTRICAL SERVICES RCP AND SMALL POWER',
                         'APARTMENT ELECTRICAL SERVICES RCP'
                     ],
                     'doc_ref_patterns': [],
                     'required': False,
-                    'description': 'Electrical services communal layout',
-                    'greylisted_blocks': []  
+                    'description': 'Reflected Ceiling Plan (RCP) with electrical services layout',
+                    'greylisted_blocks': ['C', 'D']
                 },
                 'underfloor_heating': {
                     'display_name': 'Underfloor Heating Layout',
@@ -516,6 +526,14 @@ APARTMENT_LAYOUT_TRACKING = {
             },
             'coverage_detection': {
                 'floor_patterns': [
+                    # Complex GP-specific patterns (must come first for priority matching)
+                    r'Level\s+(\d+)\s*&\s*(\d+)\s+to\s+(\d+)',  # Single & Range: "Level 01 & 02 to 15" = 1, 2-15
+                    r'Level\s+(\d+)\s+to\s+(\d+)\s*&\s*(\d+)',  # Range & Single: "Level 16 to 19 & 20" = 16-19, 20
+                    r'Level\s+(\d+)\s*&\s*(\d+)\s*&\s*(\d+)\s+AND\s+(\d+)',  # Multiple singles: "Level 03 & 05 & 07 AND 09" = 3,5,7,9
+                    r'Level\s+(\d+)\s*&\s*(\d+)\s*&\s*(\d+)\s*&\s*(\d+)',  # Multiple singles: "Level 01 & 03 & 05 & 07" = 1,3,5,7
+                    r'Level\s+(\d+)\s*&\s*(\d+)\s*&\s*(\d+)',  # Three singles: "Level 01 & 03 & 05" = 1,3,5
+                    
+                    # Standard patterns (existing)
                     r'Level\s+(\d+)',  # Single level: "Level 01", "Level 15"
                     r'Level\s+(\d+)-(\d+)',  # Range: "Level 20-29"
                     r'Level\s+(\d+)\s+to\s+Level\s+(\d+)',  # Range: "Level 02 to Level 05" (LEVEL repeated)
@@ -527,6 +545,7 @@ APARTMENT_LAYOUT_TRACKING = {
                     r'Ground Floor',  # Ground floor
                     r'Roof Level',  # Roof level
                     r'Level\s+00',  # Ground floor as level 00
+                    
                     # Underfloor heating specific patterns
                     r'TO\s+FLOOR\s+(\d+)',  # "TO FLOOR 09"
                     r'TO\s+FLOOR\s+(\d+)-(\d+)',  # "TO FLOOR 02-14"

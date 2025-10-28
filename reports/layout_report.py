@@ -33,6 +33,10 @@ BORDER_THIN = Border(
     bottom=Side(style='thin')
 )
 
+# Alternating background colors for layout sections
+ALT_BACKGROUND_1 = PatternFill(start_color='F8F9FA', end_color='F8F9FA', fill_type='solid')  # Light gray
+ALT_BACKGROUND_2 = PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')  # White
+
 
 def get_progress_color(percentage):
     """Get color code based on progress percentage."""
@@ -86,7 +90,7 @@ def add_overview_section(ws, layout_summary, accommodation_data):
     ws[f'A{row}'] = 'LAYOUT TRACKING OVERVIEW'
     ws[f'A{row}'].font = SECTION_FONT
     ws[f'A{row}'].fill = SECTION_FILL
-    ws[f'A{row}'].alignment = Alignment(horizontal='left', vertical='center')
+    ws[f'A{row}'].alignment = Alignment(horizontal='center', vertical='center')
     ws.merge_cells(f'A{row}:G{row}')
     row += 2
     
@@ -115,6 +119,107 @@ def add_overview_section(ws, layout_summary, accommodation_data):
             ws[f'B{row}'].alignment = Alignment(horizontal='left')
         row += 1
     
+    # Add overall apartment layout progress (similar to certificate report)
+    apartment_progress = layout_summary.get('apartment_progress', {})
+    if apartment_progress and total_types > 0:
+        # Calculate overall apartment layout coverage
+        total_types_with_layouts = 0
+        total_coverage_percentage = 0
+        layout_count = 0
+        
+        for layout_key, progress in apartment_progress.items():
+            types_with_layout = progress.get('types_with_layout', 0)
+            coverage_pct = progress.get('coverage_percentage', 0)
+            total_types_with_layouts += types_with_layout
+            total_coverage_percentage += coverage_pct
+            layout_count += 1
+        
+        # Calculate average coverage across all layout types
+        if layout_count > 0:
+            avg_coverage = total_coverage_percentage / layout_count
+        else:
+            avg_coverage = 0
+        
+        # Add spacing
+        row += 1
+        
+        # Overall progress header row
+        ws[f'A{row}'] = 'Overall Apartment Layout Progress'
+        ws[f'A{row}'].font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+        ws[f'A{row}'].fill = HEADER_FILL
+        ws[f'A{row}'].alignment = Alignment(horizontal='center', vertical='center')
+        ws[f'A{row}'].border = BORDER_THIN
+        
+        ws[f'B{row}'] = 'Total Layouts'
+        ws[f'B{row}'].font = Font(name='Calibri', size=11, bold=True, color='FFFFFF') 
+        ws[f'B{row}'].fill = HEADER_FILL
+        ws[f'B{row}'].alignment = Alignment(horizontal='center', vertical='center')
+        ws[f'B{row}'].border = BORDER_THIN
+        
+        ws[f'C{row}'] = 'Documents'
+        ws[f'C{row}'].font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+        ws[f'C{row}'].fill = HEADER_FILL
+        ws[f'C{row}'].alignment = Alignment(horizontal='center', vertical='center')
+        ws[f'C{row}'].border = BORDER_THIN
+        
+        # Progress bar header (D through G)
+        ws.merge_cells(f'D{row}:G{row}')
+        ws[f'D{row}'] = 'Overall Progress'
+        ws[f'D{row}'].font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+        ws[f'D{row}'].fill = HEADER_FILL
+        ws[f'D{row}'].alignment = Alignment(horizontal='center', vertical='center')
+        for col_num in range(4, 8):  # D through G
+            ws.cell(row=row, column=col_num).border = BORDER_THIN
+            ws.cell(row=row, column=col_num).fill = HEADER_FILL
+        
+        row += 1
+        
+        # Overall progress data row
+        # Calculate total unique layouts and documents (same logic as individual categories)
+        total_unique_layouts = 0
+        total_documents = 0
+        for layout_key, progress in apartment_progress.items():
+            # Sum up the unique apartment types with layouts (not documents)
+            types_with_layout = progress.get('types_with_layout', 0)
+            total_unique_layouts += types_with_layout
+            total_documents += progress.get('document_count', 0)
+        
+        # Total expected layouts = apartment types × layout categories
+        total_expected_layouts = total_types * layout_count
+        
+        ws[f'A{row}'] = 'All Layout Categories'
+        ws[f'A{row}'].font = Font(name='Calibri', size=10, bold=True)
+        ws[f'A{row}'].alignment = Alignment(horizontal='center', vertical='center')
+        ws[f'A{row}'].border = BORDER_THIN
+        
+        ws[f'B{row}'] = f"{total_unique_layouts} / {total_expected_layouts}"
+        ws[f'B{row}'].font = Font(name='Calibri', size=10, bold=True)
+        ws[f'B{row}'].alignment = Alignment(horizontal='center', vertical='center')
+        ws[f'B{row}'].border = BORDER_THIN
+        
+        ws[f'C{row}'] = total_documents
+        ws[f'C{row}'].font = Font(name='Calibri', size=10, bold=True)
+        ws[f'C{row}'].alignment = Alignment(horizontal='center', vertical='center')
+        ws[f'C{row}'].border = BORDER_THIN
+        
+        # Progress bar (D through G)
+        ws.merge_cells(f'D{row}:G{row}')
+        
+        # Calculate overall percentage based on unique layouts found vs expected
+        if total_expected_layouts > 0:
+            overall_percentage = (total_unique_layouts / total_expected_layouts) * 100
+        else:
+            overall_percentage = 0
+        
+        # Add progress bar
+        add_progress_bar(ws, f'D{row}', overall_percentage)
+        
+        # Add borders to progress bar area
+        for col_num in range(4, 8):  # D through G
+            ws.cell(row=row, column=col_num).border = BORDER_THIN
+        
+        row += 1
+    
     return row + 2
 
 
@@ -125,7 +230,7 @@ def add_apartment_layouts_section(ws, apartment_progress, start_row):
     ws[f'A{start_row}'] = 'APARTMENT LAYOUT CATEGORIES'
     ws[f'A{start_row}'].font = SECTION_FONT
     ws[f'A{start_row}'].fill = SECTION_FILL
-    ws[f'A{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
+    ws[f'A{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
     ws.merge_cells(f'A{start_row}:G{start_row}')
     start_row += 2
     
@@ -194,8 +299,6 @@ def add_apartment_layouts_section(ws, apartment_progress, start_row):
         
         start_row += 1
     
-    start_row += 2
-    
     return start_row + 2
 
 
@@ -205,8 +308,8 @@ def add_missing_types_summary(ws, apartment_progress, start_row):
     # Section header
     ws[f'A{start_row}'] = 'MISSING APARTMENT TYPES'
     ws[f'A{start_row}'].font = SECTION_FONT
-    ws[f'A{start_row}'].fill = PatternFill(start_color='C00000', end_color='C00000', fill_type='solid')
-    ws[f'A{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
+    ws[f'A{start_row}'].fill = PatternFill(start_color='D2691E', end_color='D2691E', fill_type='solid')  # Auburn/chocolate color
+    ws[f'A{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
     ws.merge_cells(f'A{start_row}:G{start_row}')
     start_row += 2
     
@@ -305,7 +408,7 @@ def add_duplicates_section(ws, apartment_progress, start_row):
     ws[f'A{start_row}'] = 'APARTMENT TYPES WITH ALTERNATIVE LAYOUTS'
     ws[f'A{start_row}'].font = SECTION_FONT
     ws[f'A{start_row}'].fill = PatternFill(start_color='FF6600', end_color='FF6600', fill_type='solid')
-    ws[f'A{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
+    ws[f'A{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
     ws.merge_cells(f'A{start_row}:H{start_row}')
     start_row += 2
     
@@ -345,7 +448,7 @@ def add_communal_layouts_section(ws, communal_progress, start_row, project_struc
     ws[f'A{start_row}'] = 'COMMUNAL LAYOUT CATEGORIES'
     ws[f'A{start_row}'].font = SECTION_FONT
     ws[f'A{start_row}'].fill = SECTION_FILL
-    ws[f'A{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
+    ws[f'A{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
     ws.merge_cells(f'A{start_row}:G{start_row}')
     start_row += 1
     
@@ -416,27 +519,54 @@ def add_communal_layouts_section(ws, communal_progress, start_row, project_struc
     ws[f'A{start_row}'] = 'BLOCK COVERAGE BREAKDOWN'
     ws[f'A{start_row}'].font = SECTION_FONT
     ws[f'A{start_row}'].fill = SECTION_FILL
-    ws[f'A{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
+    ws[f'A{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
     ws.merge_cells(f'A{start_row}:G{start_row}')
     start_row += 1
     
-    # Block coverage headers (simplified layout)
-    block_headers = ['Layout Category', 'Block', 'Covered Floors', 'Missing Floors', 'Status']
-    
-    for col_idx, header in enumerate(block_headers, 1):
+    # Enhanced block coverage headers with better column layout (A-G)
+    # Single column headers
+    single_headers = ['Layout Category', 'Block', 'Covered Floors']
+    for col_idx, header in enumerate(single_headers, 1):
         cell = ws.cell(row=start_row, column=col_idx, value=header)
         cell.font = SUBHEADER_FONT
         cell.fill = SUBHEADER_FILL
         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
         cell.border = BORDER_THIN
+    
+    # Missing Floors header (columns D-E, merged)
+    ws.merge_cells(f'D{start_row}:E{start_row}')
+    missing_header = ws.cell(row=start_row, column=4, value='Missing Floors')
+    missing_header.font = SUBHEADER_FONT
+    missing_header.fill = SUBHEADER_FILL
+    missing_header.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    # Add borders to both merged cells
+    for col in range(4, 6):  # Columns D-E
+        ws.cell(row=start_row, column=col).border = BORDER_THIN
+        ws.cell(row=start_row, column=col).fill = SUBHEADER_FILL
+    
+    # Status header (columns F-G, merged)
+    ws.merge_cells(f'F{start_row}:G{start_row}')
+    status_header = ws.cell(row=start_row, column=6, value='Status')
+    status_header.font = SUBHEADER_FONT
+    status_header.fill = SUBHEADER_FILL
+    status_header.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    # Add borders to both merged cells
+    for col in range(6, 8):  # Columns F-G
+        ws.cell(row=start_row, column=col).border = BORDER_THIN
+        ws.cell(row=start_row, column=col).fill = SUBHEADER_FILL
+    
     start_row += 1
     
-    # Add block-by-block data
+    # Add block-by-block data with alternating backgrounds
+    section_index = 0
     for layout_key, progress in communal_progress.items():
         display_name = progress['display_name']
         expected_by_block = progress.get('expected_floors_by_block', {})
         coverage_by_block = progress.get('coverage_by_block', {})
         greylisted_blocks = set(progress.get('greylisted_blocks', []))
+        
+        # Alternating background color for this section
+        section_bg = ALT_BACKGROUND_1 if section_index % 2 == 0 else ALT_BACKGROUND_2
         
         # Get ALL blocks from PROJECT_STRUCTURE (not just those with expected floors)
         if project_structure and 'blocks' in project_structure:
@@ -445,15 +575,22 @@ def add_communal_layouts_section(ws, communal_progress, start_row, project_struc
             # Fallback to blocks in expected_by_block
             all_blocks = sorted(expected_by_block.keys())
         
+        # No separator needed - using full section borders instead
+        
         # Layout category name (only show once per category, vertically centered)
         if all_blocks:
             category_cell = ws.cell(row=start_row, column=1, value=display_name)
             category_cell.font = Font(name='Calibri', size=10, bold=True)
             category_cell.alignment = Alignment(horizontal='center', vertical='center')
+            category_cell.fill = section_bg
             # Merge cells vertically for this category
             if len(all_blocks) > 1:
                 ws.merge_cells(f'A{start_row}:A{start_row + len(all_blocks) - 1}')
+                # Apply background to all merged cells
+                for row_offset in range(len(all_blocks)):
+                    ws.cell(row=start_row + row_offset, column=1).fill = section_bg
         
+        section_start_row = start_row
         for block in all_blocks:
             expected_floors = expected_by_block.get(block, [])
             covered_floors = coverage_by_block.get(block, [])
@@ -472,27 +609,33 @@ def add_communal_layouts_section(ws, communal_progress, start_row, project_struc
             expected_count = len(expected_floors)
             missing_count = len(missing_floors)
             
-            # Block name (centered)
-            # Only show as grey/italic if greylisted AND no layouts
+            # Block name (centered) with section background
             block_cell = ws.cell(row=start_row, column=2, value=f"Block {block}")
             block_cell.alignment = Alignment(horizontal='center', vertical='center')
+            block_cell.fill = section_bg
             if is_greylisted and covered_count == 0:
                 block_cell.font = Font(name='Calibri', size=10, italic=True, color='999999')
+            else:
+                block_cell.font = Font(name='Calibri', size=10, color='4472C4', bold=True)
             
-            # Covered floors (centered)
+            # Covered floors (centered) with section background
             covered_cell = ws.cell(row=start_row, column=3, value=covered_count)
             covered_cell.alignment = Alignment(horizontal='center', vertical='center')
+            covered_cell.font = Font(name='Calibri', size=10, bold=True)
+            covered_cell.fill = section_bg
             
-            # Missing floors - show actual floor numbers instead of count (centered)
-            # Only show as grey/italic if greylisted AND no layouts
+            # Missing floors - spans columns D-E with merged cells
+            ws.merge_cells(f'D{start_row}:E{start_row}')
+            
             if missing_count == 0:
                 missing_text = "None"
                 missing_cell = ws.cell(row=start_row, column=4, value=missing_text)
+                missing_cell.font = Font(name='Calibri', size=10, color='00B050')
             else:
                 missing_list = sorted(list(missing_floors))
-                missing_text = ', '.join(map(str, missing_list[:10]))  # Limit to 10 floors for readability
-                if len(missing_list) > 10:
-                    missing_text += f' ... and {len(missing_list) - 10} more'
+                missing_text = ', '.join(map(str, missing_list[:12]))  # More space with 2 columns
+                if len(missing_list) > 12:
+                    missing_text += f' ... (+{len(missing_list) - 12} more)'
                 missing_cell = ws.cell(row=start_row, column=4, value=missing_text)
                 # Show in red if not greylisted OR if greylisted but has layouts
                 if not is_greylisted or covered_count > 0:
@@ -500,35 +643,67 @@ def add_communal_layouts_section(ws, communal_progress, start_row, project_struc
                 else:
                     missing_cell.font = Font(name='Calibri', size=10, color='999999', italic=True)
             missing_cell.alignment = Alignment(horizontal='center', vertical='center')
+            # Apply background to both merged cells
+            for col in range(4, 6):  # Columns D-E
+                ws.cell(row=start_row, column=col).fill = section_bg
             
-            # Status - improved text with greylist support
+            # Status - spans columns F-G with merged cells
+            ws.merge_cells(f'F{start_row}:G{start_row}')
+            
             if is_greylisted:
                 # For optional blocks, show coverage status (never "missing")
                 if covered_count == 0:
                     status = "N/A (Optional)"
-                    status_cell = ws.cell(row=start_row, column=5, value=status)
+                    status_cell = ws.cell(row=start_row, column=6, value=status)
                     status_cell.font = Font(name='Calibri', size=10, color='999999', italic=True)
                 else:
                     status = f"✓ {covered_count} floor(s) (Optional)"
-                    status_cell = ws.cell(row=start_row, column=5, value=status)
+                    status_cell = ws.cell(row=start_row, column=6, value=status)
                     status_cell.font = Font(name='Calibri', size=10, color='00B050')
             elif missing_count == 0 and expected_count > 0:
                 status = "✓ Complete"
-                status_cell = ws.cell(row=start_row, column=5, value=status)
+                status_cell = ws.cell(row=start_row, column=6, value=status)
                 status_cell.font = Font(name='Calibri', size=10, bold=True, color='00B050')
             elif expected_count == 0:
                 status = "N/A"
-                status_cell = ws.cell(row=start_row, column=5, value=status)
+                status_cell = ws.cell(row=start_row, column=6, value=status)
                 status_cell.font = Font(name='Calibri', size=10, color='666666')
             else:
                 status = f"Missing {missing_count} floors"
-                status_cell = ws.cell(row=start_row, column=5, value=status)
+                status_cell = ws.cell(row=start_row, column=6, value=status)
                 status_cell.font = Font(name='Calibri', size=10, color='C00000')
+            
+            status_cell.alignment = Alignment(horizontal='center', vertical='center')
+            # Apply background to both merged cells
+            for col in range(6, 8):  # Columns F-G
+                ws.cell(row=start_row, column=col).fill = section_bg
             
             start_row += 1
         
-        # Add spacing between layout categories
-        start_row += 1
+        # Add borders around the entire section (category + all its blocks)
+        section_end_row = start_row - 1  # Last row of this section
+        
+        # Apply medium border around the entire section
+        for row in range(section_start_row, section_end_row + 1):
+            for col in range(1, 8):  # Columns A-G
+                cell = ws.cell(row=row, column=col)
+                
+                # Determine which borders to apply
+                top_border = Side(style='medium', color='4472C4') if row == section_start_row else cell.border.top
+                bottom_border = Side(style='medium', color='4472C4') if row == section_end_row else cell.border.bottom
+                left_border = Side(style='medium', color='4472C4') if col == 1 else cell.border.left
+                right_border = Side(style='medium', color='4472C4') if col == 7 else cell.border.right
+                
+                # Apply the border
+                cell.border = Border(
+                    top=top_border,
+                    bottom=bottom_border,
+                    left=left_border,
+                    right=right_border
+                )
+        
+        # Increment section index for alternating backgrounds
+        section_index += 1
     
     return start_row
 
@@ -540,7 +715,7 @@ def add_missing_types_section(ws, apartment_progress, start_row):
     ws[f'A{start_row}'] = 'MISSING APARTMENT TYPES BY CATEGORY'
     ws[f'A{start_row}'].font = SECTION_FONT
     ws[f'A{start_row}'].fill = SECTION_FILL
-    ws[f'A{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
+    ws[f'A{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
     ws.merge_cells(f'A{start_row}:H{start_row}')
     start_row += 2
     
@@ -609,7 +784,7 @@ def add_alternatives_section(ws, apartment_progress, start_row):
     ws[f'A{start_row}'] = 'APARTMENT TYPES WITH ALTERNATIVE LAYOUTS'
     ws[f'A{start_row}'].font = SECTION_FONT
     ws[f'A{start_row}'].fill = PatternFill(start_color='FF6600', end_color='FF6600', fill_type='solid')
-    ws[f'A{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
+    ws[f'A{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
     ws.merge_cells(f'A{start_row}:H{start_row}')
     start_row += 2
     
@@ -649,7 +824,7 @@ def add_block_coverage_details_section(ws, communal_progress, start_row):
     ws[f'A{start_row}'] = 'BLOCK COVERAGE DETAILS'
     ws[f'A{start_row}'].font = SECTION_FONT
     ws[f'A{start_row}'].fill = SECTION_FILL
-    ws[f'A{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
+    ws[f'A{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
     ws.merge_cells(f'A{start_row}:H{start_row}')
     start_row += 2
     
@@ -1042,7 +1217,7 @@ def save_layout_report(latest_data, output_file, config):
         suffix = 'th' if 11 <= day <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
         date_str = f"{day}{suffix} {now.strftime('%B %Y')}"
         
-        ws['A2'] = date_str
+        ws['A2'] = f"Report Date: {date_str}"
         ws['A2'].font = Font(name='Calibri', size=10, italic=True)
         ws['A2'].alignment = Alignment(horizontal='center')
         ws.merge_cells('A2:G2')
