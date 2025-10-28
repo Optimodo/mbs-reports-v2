@@ -1286,12 +1286,23 @@ def get_layout_tracking_summary(latest_data: pd.DataFrame, layout_tracking_confi
     
     # Filter by file type
     for file_type in detection.get('file_type_patterns', []):
-        mask |= latest_data['File Type'].fillna('').str.contains(file_type, case=False, na=False)
+        # Use exact match with re.escape to prevent partial matches
+        # Word boundaries don't work well with spaces and parentheses, so we match the exact string
+        mask |= latest_data['File Type'].fillna('').str.contains(re.escape(file_type), case=False, na=False, regex=True)
     
     # Filter by doc ref patterns
     if 'Doc Ref' in latest_data.columns:
         for pattern in detection.get('doc_ref_patterns', []):
             mask |= latest_data['Doc Ref'].fillna('').str.contains(pattern, case=False, na=False, regex=True)
+    
+    # Filter by doc path patterns
+    if 'Doc Path' in latest_data.columns:
+        path_patterns = detection.get('path_patterns', [])
+        if path_patterns:
+            path_mask = pd.Series([False] * len(latest_data), index=latest_data.index)
+            for pattern in path_patterns:
+                path_mask |= latest_data['Doc Path'].fillna('').str.contains(pattern, case=False, na=False, regex=True)
+            mask &= path_mask  # AND with existing mask (path filter is restrictive)
     
     # Exclude patterns
     for exclude_pattern in detection.get('exclude_patterns', []):

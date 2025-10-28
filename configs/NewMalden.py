@@ -353,7 +353,7 @@ APARTMENT_LAYOUT_TRACKING = {
     'enabled': True,  # Enabled - will generate empty report until patterns are configured
     
     'detection': {
-        'file_type_patterns': [],  # TODO: Add patterns like ['DR'] for drawings
+        'file_type_patterns': ['Drawing (DR)' ,'Schematic (SM)'],  # Detect drawing and schematic files
         'doc_ref_patterns': [],
         'exclude_patterns': ['Schedule', 'Detail', 'Section', 'Elevation'],
     },
