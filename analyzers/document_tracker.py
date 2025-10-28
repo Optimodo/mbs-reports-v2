@@ -651,24 +651,36 @@ def extract_apartment_types(doc_title: str, doc_ref: str = "", doc_path: str = "
     for pattern in type_patterns.get('title_patterns', []):
         matches = re.findall(pattern, doc_title, re.IGNORECASE)
         for match in matches:
-            # The match might be a string like "5 & 5A" or "30" or "1A"
-            # Extract individual type codes from it
-            type_codes = re.findall(r'\b([0-9]+[A-Za-z]?)\b', match)
-            found_types.extend([code.upper() for code in type_codes])
+            # Check if this looks like a complete type code (e.g., "AA (PD)" with tenure)
+            # Pattern: letters/numbers with optional dashes, optionally followed by (Tenure)
+            if re.match(r'^[A-Z0-9-]+(\s*\([A-Za-z]+\))?$', match, re.IGNORECASE):
+                # Already a complete type code - use it directly
+                found_types.append(match.upper())
+            else:
+                # Might be a string like "5 & 5A" or "30" or "1A"
+                # Extract individual type codes from it
+                type_codes = re.findall(r'\b([0-9]+[A-Za-z]?)\b', match)
+                found_types.extend([code.upper() for code in type_codes])
     
     # Try doc ref patterns
     for pattern in type_patterns.get('doc_ref_patterns', []):
         matches = re.findall(pattern, doc_ref, re.IGNORECASE)
         for match in matches:
-            type_codes = re.findall(r'\b([0-9]+[A-Za-z]?)\b', match)
-            found_types.extend([code.upper() for code in type_codes])
+            if re.match(r'^[A-Z0-9-]+(\s*\([A-Za-z]+\))?$', match, re.IGNORECASE):
+                found_types.append(match.upper())
+            else:
+                type_codes = re.findall(r'\b([0-9]+[A-Za-z]?)\b', match)
+                found_types.extend([code.upper() for code in type_codes])
     
     # Try path patterns
     for pattern in type_patterns.get('path_patterns', []):
         matches = re.findall(pattern, doc_path, re.IGNORECASE)
         for match in matches:
-            type_codes = re.findall(r'\b([0-9]+[A-Za-z]?)\b', match)
-            found_types.extend([code.upper() for code in type_codes])
+            if re.match(r'^[A-Z0-9-]+(\s*\([A-Za-z]+\))?$', match, re.IGNORECASE):
+                found_types.append(match.upper())
+            else:
+                type_codes = re.findall(r'\b([0-9]+[A-Za-z]?)\b', match)
+                found_types.extend([code.upper() for code in type_codes])
     
     # Remove duplicates while preserving order
     seen = set()
@@ -681,12 +693,52 @@ def extract_apartment_types(doc_title: str, doc_ref: str = "", doc_path: str = "
     return unique_types
 
 
+def extract_sheet_info(doc_title: str, doc_ref: str = "") -> Tuple[Optional[int], Optional[int]]:
+    """
+    Extract sheet information from document (e.g., "Sheet 1 of 5").
+    
+    Args:
+        doc_title: Document title
+        doc_ref: Document reference
+        
+    Returns:
+        Tuple of (current_sheet, total_sheets) or (None, None) if not found
+    """
+    if pd.isna(doc_title):
+        doc_title = ""
+    if pd.isna(doc_ref):
+        doc_ref = ""
+    
+    search_text = f"{doc_title} {doc_ref}"
+    
+    # Pattern: "Sheet X of Y" or "Sheet X/Y"
+    sheet_patterns = [
+        r'Sheet\s+(\d+)\s+of\s+(\d+)',  # "Sheet 1 of 5"
+        r'Sheet\s+(\d+)/(\d+)',          # "Sheet 1/5"
+        r'Sht\s+(\d+)\s+of\s+(\d+)',    # "Sht 1 of 5"
+        r'Sht\s+(\d+)/(\d+)',            # "Sht 1/5"
+    ]
+    
+    for pattern in sheet_patterns:
+        match = re.search(pattern, search_text, re.IGNORECASE)
+        if match:
+            try:
+                current_sheet = int(match.group(1))
+                total_sheets = int(match.group(2))
+                return (current_sheet, total_sheets)
+            except (ValueError, IndexError):
+                pass
+    
+    return (None, None)
+
+
 def extract_floor_coverage(doc_title: str, doc_ref: str = "", doc_path: str = "",
                            floor_patterns: List[str] = None) -> List[int]:
     """
     Extract floor coverage from document (for communal layouts).
     
     Handles both single floors and multi-floor ranges (e.g., "Levels 04-08").
+    Also handles word-based floor numbers (e.g., "Fourth floor", "Ninth floor").
     
     Args:
         doc_title: Document title
@@ -710,7 +762,21 @@ def extract_floor_coverage(doc_title: str, doc_ref: str = "", doc_path: str = ""
     search_text = f"{doc_title} {doc_ref} {doc_path}"
     floors = set()
     
-    # Handle special floor keywords first
+    # Word-to-number mapping for floor detection
+    floor_word_map = {
+        'first': 1, 'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5,
+        'sixth': 6, 'seventh': 7, 'eighth': 8, 'ninth': 9, 'tenth': 10,
+        'eleventh': 11, 'twelfth': 12, 'thirteenth': 13, 'fourteenth': 14,
+        'fifteenth': 15, 'sixteenth': 16, 'seventeenth': 17, 'eighteenth': 18,
+        'nineteenth': 19, 'twentieth': 20
+    }
+    
+    # Check for word-based floor numbers
+    for word, number in floor_word_map.items():
+        if re.search(rf'\b{word}\s+floor\b', search_text, re.IGNORECASE):
+            floors.add(number)
+    
+    # Handle special floor keywords
     if re.search(r'Ground Floor', search_text, re.IGNORECASE):
         floors.add(0)
     if re.search(r'TO GROUND FLOOR', search_text, re.IGNORECASE):
@@ -866,12 +932,21 @@ def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
             
             # For matching documents, extract floor coverage
             for idx in df[mask].index:
+                doc_title = df.loc[idx, 'Doc Title']
+                doc_ref = df.loc[idx, 'Doc Ref'] if 'Doc Ref' in df.columns else ""
+                
                 floors = extract_floor_coverage(
-                    df.loc[idx, 'Doc Title'],
-                    df.loc[idx, 'Doc Ref'] if 'Doc Ref' in df.columns else "",
+                    doc_title,
+                    doc_ref,
                     df.loc[idx, 'Doc Path'] if 'Doc Path' in df.columns else "",
                     coverage_detection.get('floor_patterns', [])
                 )
+                
+                # Extract sheet information if this layout type tracks sheets
+                current_sheet = None
+                total_sheets = None
+                if layout_config.get('track_sheets', False):
+                    current_sheet, total_sheets = extract_sheet_info(doc_title, doc_ref)
                 
                 # Categorize communal layout
                 categorized_indices.add(idx)  # Mark as categorized
@@ -880,6 +955,8 @@ def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
                 row_dict['layout_type'] = layout_key
                 row_dict['apartment_type'] = None
                 row_dict['floor_coverage'] = str(floors) if floors else '[]'
+                row_dict['current_sheet'] = current_sheet
+                row_dict['total_sheets'] = total_sheets
                 row_dict['block'] = None
                 row_dict['phase'] = None
                 expanded_rows.append(row_dict)
@@ -892,6 +969,8 @@ def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
             row_dict['layout_type'] = None
             row_dict['apartment_type'] = None
             row_dict['floor_coverage'] = None
+            row_dict['current_sheet'] = None
+            row_dict['total_sheets'] = None
             row_dict['block'] = None
             row_dict['phase'] = None
             expanded_rows.append(row_dict)
@@ -925,12 +1004,13 @@ def normalize_type_code(type_code: str) -> str:
     Normalize apartment type codes for comparison.
     
     Handles:
-    - Case normalization (01a -> 01A)
+    - Case normalization (01a -> 01A, B-2 (int) -> B-2 (INT))
     - Leading zero removal (01A -> 1A, but 01a -> 1a)
+    - Space normalization for tenure-bundled types (OO-1(PD) -> OO-1 (PD))
     - Returns normalized version for matching
     
     Args:
-        type_code: Original type code (e.g., "01a", "1A", "13a")
+        type_code: Original type code (e.g., "01a", "1A", "13a", "B-2 (Int)", "OO-1(PD)")
         
     Returns:
         Normalized type code for comparison
@@ -941,9 +1021,12 @@ def normalize_type_code(type_code: str) -> str:
     # Convert to uppercase
     normalized = type_code.upper()
     
-    # Remove leading zeros from the numeric part
-    # Pattern: optional leading zeros + digits + optional letter
+    # Normalize spacing before tenure parentheses (handle "A-1(PD)" -> "A-1 (PD)")
     import re
+    normalized = re.sub(r'(\w)(\([A-Z]+\))', r'\1 \2', normalized)
+    
+    # Remove leading zeros from the numeric part (only for simple numeric types)
+    # Pattern: optional leading zeros + digits + optional letter (not tenure-bundled types)
     match = re.match(r'^0*(\d+)([A-Z]?)$', normalized)
     if match:
         digits = match.group(1)
@@ -1132,6 +1215,10 @@ def calculate_communal_layout_progress(categorized_df: pd.DataFrame,
         total_missing_floors = set()
         document_details = []
         
+        # Check if this layout type tracks sheets (multi-sheet documents)
+        track_sheets = layout_config.get('track_sheets', False)
+        sheet_groups = {}  # Group documents by floor coverage for sheet tracking
+        
         for _, doc in layout_docs.iterrows():
             # Parse floor coverage from the document
             floor_coverage_str = doc.get('floor_coverage', '')
@@ -1142,23 +1229,82 @@ def calculate_communal_layout_progress(categorized_df: pd.DataFrame,
             except:
                 covered_floors = []
             
-            # Extract block information from title
-            blocks_covered = extract_blocks_from_title(doc_title)
+            # Get block information from already-extracted block column
+            # (Block was extracted during categorization using block_detection patterns)
+            doc_block = doc.get('block', None)
+            if doc_block:
+                # Handle block-wide layouts (e.g., "Block B" applies to both B1 and B2)
+                # If the block matches a parent block pattern, expand to all sub-blocks
+                if doc_block == 'B' and any(b in expected_floors_by_block for b in ['B1', 'B2']):
+                    # Block B layouts apply to both B1 and B2
+                    blocks_covered = ['B1', 'B2']
+                else:
+                    blocks_covered = [doc_block]  # Single block per document
+            else:
+                # Fallback to extracting from title (for legacy projects)
+                blocks_covered = extract_blocks_from_title(doc_title)
+            
+            # Get sheet information if available
+            current_sheet = doc.get('current_sheet', None)
+            total_sheets = doc.get('total_sheets', None)
             
             # Store document details
             doc_info = {
                 'title': doc_title,
                 'blocks': blocks_covered,
                 'floors': covered_floors,
-                'coverage_type': 'multi-block' if len(blocks_covered) > 1 else 'single-block'
+                'coverage_type': 'multi-block' if len(blocks_covered) > 1 else 'single-block',
+                'current_sheet': current_sheet,
+                'total_sheets': total_sheets
             }
             document_details.append(doc_info)
             
+            # Handle sheet tracking logic
+            has_sheet_info = False
+            if track_sheets and current_sheet is not None and total_sheets is not None:
+                try:
+                    # Ensure values are valid numbers, not NaN
+                    current_sheet_int = int(current_sheet)
+                    total_sheets_int = int(total_sheets)
+                    
+                    # Create a key for this floor coverage (e.g., "1,2" for floors 1 and 2)
+                    floor_key = ','.join(map(str, sorted(covered_floors)))
+                    if floor_key not in sheet_groups:
+                        sheet_groups[floor_key] = {
+                            'floors': covered_floors,
+                            'total_sheets_expected': total_sheets_int,
+                            'sheets_found': set(),
+                            'blocks': blocks_covered  # Store blocks for this floor group
+                        }
+                    sheet_groups[floor_key]['sheets_found'].add(current_sheet_int)
+                    has_sheet_info = True  # Mark that this document has sheet info
+                except (ValueError, TypeError):
+                    # Invalid sheet information - treat as single document
+                    pass
+            
             # Update coverage by block
-            for block in blocks_covered:
-                if block not in coverage_by_block:
-                    coverage_by_block[block] = set()
-                coverage_by_block[block].update(covered_floors)
+            # For non-sheet-tracked layouts OR documents without sheet info, add immediately
+            if not track_sheets or not has_sheet_info:
+                # Normal coverage tracking (immediate)
+                for block in blocks_covered:
+                    if block not in coverage_by_block:
+                        coverage_by_block[block] = set()
+                    coverage_by_block[block].update(covered_floors)
+        
+        # For sheet-tracked layouts, only mark floors as covered if all sheets are present
+        if track_sheets and sheet_groups:
+            for floor_key, group_info in sheet_groups.items():
+                sheets_found = group_info['sheets_found']
+                total_sheets_expected = group_info['total_sheets_expected']  # Already converted to int during grouping
+                expected_sheets = set(range(1, total_sheets_expected + 1))
+                
+                # Check if all sheets are present
+                if sheets_found == expected_sheets:
+                    # All sheets present - mark floors as covered
+                    for block in group_info['blocks']:
+                        if block not in coverage_by_block:
+                            coverage_by_block[block] = set()
+                        coverage_by_block[block].update(group_info['floors'])
         
         # Get greylisted blocks (blocks that don't require this layout)
         greylisted_blocks = set(layout_config.get('greylisted_blocks', []))

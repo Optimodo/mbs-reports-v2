@@ -3,7 +3,7 @@
 import warnings
 import pandas as pd
 from pathlib import Path
-from utils.data_cleaning import clean_revision
+from utils.data_cleaning import clean_revision, clean_document_title
 
 # Suppress warnings
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -69,9 +69,11 @@ def process_csv_file(file_path, config):
             except ImportError:
                 print("Warning: Could not import West Cromwell Road status mapping function")
         
-        # Clean revision column
+        # Clean user-input columns (normalize Cyrillic characters to ASCII)
         if 'Rev' in df.columns:
             df['Rev'] = df['Rev'].apply(clean_revision)
+        if 'Doc Title' in df.columns:
+            df['Doc Title'] = df['Doc Title'].apply(clean_document_title)
         
         return df
         
@@ -134,12 +136,15 @@ def load_document_listing(file_path, config):
                 except ImportError:
                     print("Warning: Could not import West Cromwell Road status mapping function")
             
-            # Clean revision column for Excel files (CSV already cleaned in process_csv_file)
+            # Clean user-input columns for Excel files (normalize Cyrillic characters to ASCII)
+            # CSV files already cleaned in process_csv_file
             if 'Rev' in df.columns:
                 df['Rev'] = df['Rev'].apply(clean_revision)
+            if 'Doc Title' in df.columns:
+                df['Doc Title'] = df['Doc Title'].apply(clean_document_title)
         
         # Convert all columns to string for consistency
-        # IMPORTANT: This must happen AFTER clean_revision to avoid converting 'nan' to string 'nan'
+        # IMPORTANT: This must happen AFTER cleaning functions to avoid converting 'nan' to string 'nan'
         for col in df.columns:
             try:
                 df[col] = df[col].astype(str)

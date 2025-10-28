@@ -226,6 +226,12 @@ ACCOMMODATION_SCHEDULE_CONFIG = {
             'extract_pattern': r',\s*([A-Z0-9\s]+)$',  # Extract after comma (postcode at end)
             'strip': True                   # Strip whitespace
         }
+    },
+    # Tenure bundling configuration (for projects with multiple tenures per type)
+    'tenure_config': {
+        'enabled': True,  # Enable tenure bundling for OvalBlockB
+        'format': '({tenure})',  # Format: "Type A-1 (PD)", "Type A-1 (Int)", etc.
+        'strip_patterns': [' (WC)']  # Remove "(WC)" from type names - drawings don't include this marker
     }
 }
 
@@ -368,50 +374,153 @@ APARTMENT_LAYOUT_TRACKING = {
         'exclude_patterns': ['Schedule', 'Detail', 'Section', 'Elevation'],
     },
     
+    # Block detection for layout drawings - handles B1, B2, and Block B patterns
+    'block_detection': {
+        'patterns': [
+            r'\bBlock\s+(B[12])\b',       # Match "Block B1" or "Block B2" - captures "B1" or "B2"
+            r'\bBlock\s+(B)\b',           # Match "Block B" (without number) - captures "B"
+            r'\b(B[12])\b',               # Match "B1" or "B2" standalone - captures "B1" or "B2"
+            r'\\Block\s*(B[12])\\',       # Match in paths: "\Block B1\" or "\Block B2\" - captures "B1" or "B2"
+            r'\\Block\s*(B)\\',           # Match in paths: "\Block B\" - captures "B"
+        ],
+        'doc_title_patterns': []
+    },
+    
     'categories': {
         'apartment_layouts': {
-            'enabled': False,  # TODO: Set to True when ready
+            'enabled': True,  # Enabled for tracking apartment layouts
             
             'layout_types': {
-                # TODO: Add apartment layout types
-                # Example:
-                # 'ventilation': {
-                #     'display_name': 'Ventilation Apartment Layout',
-                #     'patterns': ['Ventilation Apartment Layout'],
-                #     'doc_ref_patterns': [],
-                #     'required': True,
-                #     'description': 'Ventilation apartment layout'
-                # }
+                'ventilation': {
+                    'display_name': 'Ventilation Apartment Layout',
+                    'patterns': ['VENTILATION LAYOUT', 'VENTILATION APARTMENT LAYOUT'],
+                    'doc_ref_patterns': [],
+                    'required': True,
+                    'description': 'Ventilation apartment layout',
+                    'greylisted_apartment_types': []
+                },
+                'mechanical_pipework': {
+                    'display_name': 'Mechanical Pipework Apartment Layout',
+                    'patterns': ['MECHANICAL PIPEWORK LAYOUT', 'MECHANICAL PIPEWORK APARTMENT LAYOUT', 'MECHANICAL LAYOUT'],
+                    'doc_ref_patterns': [],
+                    'required': True,
+                    'description': 'Mechanical pipework apartment layout',
+                    'greylisted_apartment_types': []
+                },
+                'electrical_services': {
+                    'display_name': 'Electrical Services Apartment Layout',
+                    'patterns': ['ELECTRICAL SERVICES LAYOUT', 'ELECTRICAL SERVICES APARTMENT LAYOUT'],
+                    'doc_ref_patterns': [],
+                    'required': True,
+                    'description': 'Electrical services apartment layout',
+                    'greylisted_apartment_types': []
+                },
+                'utility_cupboard': {
+                    'display_name': 'Utility Cupboard Apartment Layout',
+                    'patterns': ['UTILITY CUPBOARD LAYOUT', 'UTILITY CUPBOARD APARTMENT LAYOUT'],
+                    'doc_ref_patterns': [],
+                    'required': True,
+                    'description': 'Utility cupboard apartment layout',
+                    'greylisted_apartment_types': []
+                },
+                'rcp': {
+                    'display_name': 'RCP (Reflected Ceiling Plan) Apartment Layout',
+                    'patterns': ['RCP'],
+                    'doc_ref_patterns': [],
+                    'required': True,
+                    'description': 'RCP apartment layout (reflected ceiling plan)',
+                    'greylisted_apartment_types': []
+                }
             },
             
             'apartment_type_detection': {
-                'title_patterns': [],  # TODO: Add patterns to extract apartment types
+                # Pattern to extract apartment type with tenure: "TYPE AA (PD)" or "- TYPE B-1 (INT)"
+                'title_patterns': [
+                    r'(?:APARTMENT\s+)?-?\s*TYPE\s+([A-Z0-9-]+\s*\([A-Za-z]+\))',  # Matches "TYPE AA (PD)", "- TYPE B-1 (INT)", etc.
+                ],
                 'doc_ref_patterns': [],
                 'path_patterns': []
             }
+            
+            # Note: Block detection not needed - OvalBlockB doesn't separate B1/B2 for apartment layouts
         },
         
         'communal_layouts': {
-            'enabled': False,  # TODO: Set to True when ready
+            'enabled': True,
             # NOTE: Expected floors per block are now defined in PROJECT_STRUCTURE['blocks']
             'layout_types': {
-                # TODO: Add communal layout types
-                # Example:
-                # 'mechanical_services': {
-                #     'display_name': 'Mechanical Services Layout',
-                #     'patterns': ['Mechanical services layout'],
-                #     'doc_ref_patterns': [],
-                #     'required': False,
-                #     'description': 'Mechanical services communal layout'
-                # }
+                'communal_lighting_power': {
+                    'display_name': 'Communal Lighting & Small Power Layout',
+                    'patterns': ['Communal Lighting & Small Power Layout', 'COMMUNAL LIGHTING & SMALL POWER LAYOUT'],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Communal lighting and small power layout',
+                    'greylisted_blocks': []  # Required for both B1 and B2
+                },
+                'sprinkler': {
+                    'display_name': 'Sprinkler Layout',
+                    'patterns': [
+                        'Sprinkler Layout',
+                        'Sprinkler pipe work Layout',
+                        'Sprinkler pipework Layout',
+                        'SPRINKLER LAYOUT'
+                    ],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Sprinkler layout for corridors and communal areas',
+                    'greylisted_blocks': []  # Required for both B1 and B2
+                },
+                'rwp_svp_services': {
+                    'display_name': 'RWP & SVP Services Layout',
+                    'patterns': ['RWP & SVP Services Layout', 'RWP & SVP', 'RWP AND SVP'],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Rainwater pipe (RWP) and soil vent pipe (SVP) services layout',
+                    'greylisted_blocks': []  # Required for Block B (both sub-blocks)
+                },
+                'mechanical_combined_services': {
+                    'display_name': 'Mechanical Combined Services Layout',
+                    'patterns': ['Mechanical Combined Services Layout', 'MECHANICAL COMBINED SERVICES'],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Mechanical combined services layout for communal corridors (multi-sheet documents)',
+                    'greylisted_blocks': [],  # Required for Block B (both sub-blocks)
+                    'track_sheets': True  # Enable sheet tracking for this layout type
+                },
+                'electrical_primary_distribution': {
+                    'display_name': 'Electrical Services Primary Distribution Layout',
+                    'patterns': ['Electrical Services Primary Distribution Layout', 'ELECTRICAL SERVICES PRIMARY DISTRIBUTION'],
+                    'doc_ref_patterns': [],
+                    'required': False,
+                    'description': 'Electrical services primary distribution layout for residential levels',
+                    'greylisted_blocks': []  # Required for Block B (both sub-blocks)
+                }
             },
             'coverage_detection': {
                 'floor_patterns': [
-                    r'Level\s+(\d+)',
-                    r'Level\s+(\d+)-(\d+)',
-                    r'Level\s+(\d+)\s+to\s+(\d+)',
-                    r'Ground Floor',
-                    r'Roof Level',
+                    # Standard numeric patterns
+                    r'Level\s+(\d+)',  # "Level 08"
+                    r'Level\s+(\d+)-(\d+)',  # "Level 02-05"
+                    r'Level\s+(\d+)\s+to\s+Level\s+(\d+)',  # "Level 02 to Level 05"
+                    r'Level\s+(\d+)\s+to\s+(\d+)',  # "Level 02 to 05"
+                    r'Floor\s+(\d+)',  # "Floor 07"
+                    r'Floor\s+(\d+)-(\d+)',  # "Floor 02-05"
+                    # Word-based floor numbers (for sprinkler layouts)
+                    r'First\s+floor',  # Floor 1
+                    r'Second\s+floor',  # Floor 2
+                    r'Third\s+floor',  # Floor 3
+                    r'Fourth\s+floor',  # Floor 4
+                    r'Fifth\s+floor',  # Floor 5
+                    r'Sixth\s+floor',  # Floor 6
+                    r'Seventh\s+floor',  # Floor 7
+                    r'Eighth\s+floor',  # Floor 8
+                    r'Ninth\s+floor',  # Floor 9
+                    r'Tenth\s+floor',  # Floor 10
+                    r'Eleventh\s+floor',  # Floor 11
+                    r'Twelfth\s+floor',  # Floor 12
+                    # Special cases
+                    r'Ground Floor',  # Floor 0
+                    r'Roof Level',  # Roof
                 ]
             }
         }

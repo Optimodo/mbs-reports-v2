@@ -199,6 +199,10 @@ def parse_accommodation_schedule(project_name):
     apartment_type_cleaning = schedule_config.get('apartment_type_cleaning', {})
     custom_extractors = schedule_config.get('custom_extractors', {})
     
+    # Get tenure bundling configuration (optional, for projects with multiple tenures per type)
+    tenure_config = schedule_config.get('tenure_config', {})
+    tenure_bundling_enabled = tenure_config.get('enabled', False)
+    
     # Build structured data
     accommodation_data = {
         'total_apartments': 0,
@@ -330,12 +334,30 @@ def parse_accommodation_schedule(project_name):
         
         # Update apartment type statistics
         if apt_type:
-            if apt_type not in type_stats:
-                type_stats[apt_type] = {
+            # Strip any configured patterns from type name (e.g., remove "(WC)" for OvalBlockB)
+            cleaned_type = apt_type
+            if tenure_bundling_enabled:
+                strip_patterns = tenure_config.get('strip_patterns', [])
+                for pattern in strip_patterns:
+                    cleaned_type = cleaned_type.replace(pattern, '')
+            
+            # Bundle tenure with type if enabled (e.g., "Type A-1 (PD)")
+            if tenure_bundling_enabled and tenure:
+                tenure_format = tenure_config.get('format', '({tenure})')
+                type_key = f"{cleaned_type} {tenure_format.format(tenure=tenure)}"
+                base_type = cleaned_type  # Store original type for reference
+            else:
+                type_key = cleaned_type
+                base_type = None
+            
+            if type_key not in type_stats:
+                type_stats[type_key] = {
                     'apartments': [],
-                    'bedrooms': bedrooms
+                    'bedrooms': bedrooms,
+                    'base_type': base_type,  # Store base type for tenure-bundled entries
+                    'tenure': tenure if tenure_bundling_enabled else None
                 }
-            type_stats[apt_type]['apartments'].append(apt_num)
+            type_stats[type_key]['apartments'].append(apt_num)
         
         # Update tenure statistics
         if tenure:
@@ -384,11 +406,19 @@ def parse_accommodation_schedule(project_name):
     
     # Build apartment types structure
     for apt_type, stats in type_stats.items():
-        accommodation_data['apartment_types'][apt_type] = {
+        type_entry = {
             'count': len(stats['apartments']),
             'bedrooms': stats['bedrooms'],
             'apartments': sort_apartments(stats['apartments'])
         }
+        
+        # Add tenure metadata if bundling was enabled
+        if stats.get('base_type'):
+            type_entry['base_type'] = stats['base_type']
+        if stats.get('tenure'):
+            type_entry['tenure'] = stats['tenure']
+        
+        accommodation_data['apartment_types'][apt_type] = type_entry
     
     # Build tenure structure
     accommodation_data['tenures'] = {}
@@ -476,6 +506,13 @@ ACCOMMODATION_DATA = {{
             data_section += f"        '{apt_type}': {{\n"
             data_section += f"            'count': {type_data['count']},\n"
             data_section += f"            'bedrooms': {type_data.get('bedrooms')},\n"
+            
+            # Add base_type and tenure if present (for tenure-bundled types)
+            if type_data.get('base_type'):
+                data_section += f"            'base_type': '{type_data['base_type']}',\n"
+            if type_data.get('tenure'):
+                data_section += f"            'tenure': '{type_data['tenure']}',\n"
+            
             data_section += f"            'apartments': {type_data['apartments']}\n"
             data_section += f"        }},\n"
         data_section += f"    }},\n"

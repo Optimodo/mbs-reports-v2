@@ -211,14 +211,26 @@ def add_missing_types_summary(ws, apartment_progress, start_row):
     start_row += 2
     
     # Column headers
-    headers = ['Category', 'Missing Types']
-    for col_idx, header in enumerate(headers, 1):
-        cell = ws.cell(row=start_row, column=col_idx)
-        cell.value = header
-        cell.font = SUBHEADER_FONT
-        cell.fill = SUBHEADER_FILL
-        cell.alignment = Alignment(horizontal='center', vertical='center')
+    # Category header (column A)
+    cat_header = ws.cell(row=start_row, column=1)
+    cat_header.value = 'Category'
+    cat_header.font = SUBHEADER_FONT
+    cat_header.fill = SUBHEADER_FILL
+    cat_header.alignment = Alignment(horizontal='center', vertical='center')
+    cat_header.border = BORDER_THIN
+    
+    # Missing Types header (columns B:G, merged) with borders on all cells
+    ws.merge_cells(f'B{start_row}:G{start_row}')
+    for col in range(2, 8):  # Columns B through G
+        cell = ws.cell(row=start_row, column=col)
         cell.border = BORDER_THIN
+        cell.fill = SUBHEADER_FILL
+    # Set content on the first merged cell
+    types_header = ws.cell(row=start_row, column=2)
+    types_header.value = 'Missing Types'
+    types_header.font = SUBHEADER_FONT
+    types_header.alignment = Alignment(horizontal='center', vertical='center')
+    
     start_row += 1
     
     # Add condensed data (one row per category)
@@ -227,10 +239,13 @@ def add_missing_types_summary(ws, apartment_progress, start_row):
         greylisted_missing = progress.get('greylisted_missing_types', [])
         display_name = progress['display_name']
         
-        # Category name
-        ws.cell(row=start_row, column=1, value=display_name).font = Font(name='Calibri', size=10, bold=True)
+        # Category name in column A with border
+        cat_cell = ws.cell(row=start_row, column=1, value=display_name)
+        cat_cell.font = Font(name='Calibri', size=10, bold=True)
+        cat_cell.alignment = Alignment(horizontal='left', vertical='center')
+        cat_cell.border = BORDER_THIN
         
-        # Missing types - condensed to fit in one cell
+        # Missing types - merged cells B:G, TRUNCATED to first 10 types
         if missing_types:
             # Show first 10 types, indicate if more exist
             types_str = ', '.join(missing_types[:10])
@@ -239,19 +254,38 @@ def add_missing_types_summary(ws, apartment_progress, start_row):
             # Add note about greylisted if any
             if greylisted_missing:
                 types_str += f' (+ {len(greylisted_missing)} optional)'
-            cell = ws.cell(row=start_row, column=2, value=types_str)
+            
+            # Merge cells B:G and apply borders to ALL merged cells
+            ws.merge_cells(f'B{start_row}:G{start_row}')
+            for col in range(2, 8):  # Columns B through G
+                cell = ws.cell(row=start_row, column=col)
+                cell.border = BORDER_THIN
+            # Set the content on the first merged cell (B)
+            cell = ws.cell(row=start_row, column=2)
+            cell.value = types_str
             cell.font = Font(name='Calibri', size=9, color='C00000')
-            cell.alignment = Alignment(horizontal='left', wrap_text=False)
+            cell.alignment = Alignment(horizontal='left', vertical='center')
+            
         elif greylisted_missing:
             # Only greylisted missing
             types_str = f'{len(greylisted_missing)} optional type(s) not provided'
-            cell = ws.cell(row=start_row, column=2, value=types_str)
+            ws.merge_cells(f'B{start_row}:G{start_row}')
+            for col in range(2, 8):  # Columns B through G
+                cell = ws.cell(row=start_row, column=col)
+                cell.border = BORDER_THIN
+            cell = ws.cell(row=start_row, column=2)
+            cell.value = types_str
             cell.font = Font(name='Calibri', size=9, color='999999', italic=True)
-            cell.alignment = Alignment(horizontal='center')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
         else:
-            cell = ws.cell(row=start_row, column=2, value='All types covered ✓')
+            ws.merge_cells(f'B{start_row}:G{start_row}')
+            for col in range(2, 8):  # Columns B through G
+                cell = ws.cell(row=start_row, column=col)
+                cell.border = BORDER_THIN
+            cell = ws.cell(row=start_row, column=2)
+            cell.value = 'All types covered ✓'
             cell.font = Font(name='Calibri', size=9, color='70AD47', bold=True)
-            cell.alignment = Alignment(horizontal='center')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
         
         start_row += 1
     
@@ -522,23 +556,26 @@ def add_missing_types_section(ws, apartment_progress, start_row):
             ws[f'B{start_row}'].font = Font(name='Calibri', size=10)
             start_row += 1
             
-            # List missing types
-            types_str = ', '.join(missing_types[:20])
-            if len(missing_types) > 20:
-                types_str += f' ... and {len(missing_types) - 20} more'
-            ws[f'B{start_row}'] = types_str
-            ws[f'B{start_row}'].font = Font(name='Calibri', size=9, color='666666')
-            ws.merge_cells(f'B{start_row}:H{start_row}')
-            start_row += 1
-            
-            # Add greylisted missing types if any
+            # List ALL missing types (no truncation) with wrapping
+            types_str = ', '.join(missing_types)
+            # Add greylisted info if any
             if greylisted_missing:
-                ws[f'B{start_row}'] = f"+ {len(greylisted_missing)} optional type(s) not provided: {', '.join(greylisted_missing[:20])}"
-                ws[f'B{start_row}'].font = Font(name='Calibri', size=9, color='999999', italic=True)
-                ws.merge_cells(f'B{start_row}:H{start_row}')
-                start_row += 1
+                types_str += f' (+ {len(greylisted_missing)} optional)'
             
-            start_row += 1
+            # Merge cells and enable wrapping
+            ws.merge_cells(f'B{start_row}:H{start_row}')
+            cell = ws[f'B{start_row}']
+            cell.value = types_str
+            cell.font = Font(name='Calibri', size=9, color='666666')
+            cell.alignment = Alignment(horizontal='left', wrap_text=True, vertical='top')
+            
+            # Auto-adjust row height based on content length
+            estimated_chars = len(types_str)
+            column_width = 100  # Approximate character width for merged B:H
+            lines_needed = max(1, (estimated_chars // column_width) + 1)
+            ws.row_dimensions[start_row].height = max(20, lines_needed * 15)
+            
+            start_row += 2
         elif greylisted_missing:
             # Only greylisted missing
             ws[f'A{start_row}'] = f'{display_name}:'
