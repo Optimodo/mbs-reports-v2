@@ -1020,6 +1020,11 @@ def save_certificate_report(summary_df, latest_data, output_file, config):
         
         # Save the workbook
         wb.save(output_file)
+        
+        # Post-process to fix data bar issues (remove gaps, allow gradient)
+        from utils.openpyxl_databars_fixer import process_report_databars
+        process_report_databars(output_file)
+        
         return True
         
     except Exception as e:

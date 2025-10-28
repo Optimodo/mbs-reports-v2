@@ -1113,6 +1113,11 @@ def save_layout_report(latest_data, output_file, config):
         
         # Save workbook
         wb.save(output_file)
+        
+        # Post-process to fix data bar issues (remove gaps, allow gradient)
+        from utils.openpyxl_databars_fixer import process_report_databars
+        process_report_databars(output_file)
+        
         print(f"\n✅ Layout tracking report saved: {output_file}")
         return True
         
