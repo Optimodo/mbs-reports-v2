@@ -7,8 +7,11 @@ from pathlib import Path
 import time
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.styles.colors import Color
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 from openpyxl.chart import PieChart, Reference, BarChart
+from openpyxl.formatting.rule import DataBarRule
 from openpyxl.chart.label import DataLabelList
 from openpyxl.chart.series import DataPoint
 from openpyxl.drawing.fill import ColorChoice, PatternFillProperties, SolidColorFillProperties
@@ -74,15 +77,89 @@ def get_chart_safe_color(config_color, category):
     return config_color
 
 
+def get_progress_color(percentage):
+    """
+    Get color code based on progress percentage.
+    
+    Args:
+        percentage: Progress percentage (0-100)
+        
+    Returns:
+        str: Hex color code
+    """
+    if percentage >= 90:
+        return '25E82C'  # Green
+    elif percentage >= 75:
+        return '92D050'  # Light green
+    elif percentage >= 50:
+        return 'FFC000'  # Orange/yellow
+    elif percentage >= 25:
+        return 'FF9900'  # Orange
+    else:
+        return 'ED1111'  # Red
+
+
+def add_progress_bar(ws, cell_ref, percentage):
+    """
+    Create a visual progress bar using Excel's Data Bar conditional formatting.
+    
+    Note: Data bars will display with gradient fill - this is Excel's default behavior
+    and openpyxl does not support changing to solid fill.
+    
+    Args:
+        ws: Worksheet
+        cell_ref: Cell reference for the progress bar (e.g., 'E5')
+        percentage: Progress percentage (0-100)
+    """
+    cell = ws[cell_ref]
+    
+    # Set the cell value as a decimal (0.0 to 1.0) for data bar calculation
+    cell.value = percentage / 100
+    
+    # Get the progress color as hex
+    progress_color_hex = get_progress_color(percentage)
+    
+    # Create a Color object for the data bar
+    bar_color = Color(rgb=progress_color_hex)
+    
+    # Create a data bar rule with min=0, max=1
+    # Note: gradient fill is Excel's default and cannot be changed via openpyxl
+    data_bar = DataBarRule(
+        start_type='num',
+        start_value=0,
+        end_type='num', 
+        end_value=1,
+        color=bar_color,
+        showValue=True,  # Show the percentage value
+        minLength=None,
+        maxLength=None
+    )
+    
+    # Apply the data bar to this cell
+    ws.conditional_formatting.add(cell_ref, data_bar)
+    
+    # Format the cell to show as percentage
+    cell.number_format = '0%'
+    cell.font = Font(name='Calibri', size=11, bold=True)
+    cell.alignment = Alignment(horizontal='center', vertical='center')
+    cell.border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+
 def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max_blocks_per_phase=7):
     """
-    Add apartment certificate tracking section with progress bars.
+    Add apartment certificate tracking section with visual progress indicators.
     
     Args:
         ws: Worksheet to add tracking to
         latest_data: DataFrame with latest certificate data
         config: Project configuration
         start_row: Starting row for the tracking section
+        max_blocks_per_phase: Maximum number of blocks in any phase (for dynamic sizing)
         
     Returns:
         int: Next available row after this section
@@ -100,7 +177,7 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
     accom_data = config.get('ACCOMMODATION_DATA', {})
     has_accom_data = bool(accom_data and accom_data.get('apartment_lookup'))
     
-    # Categorize certificates
+    # Categorize certificates (will add required columns even if latest_data is empty)
     categorized = categorize_documents(latest_data, apartment_certs, cert_tracking)
     
     # Get accommodation data for accurate counts
@@ -109,12 +186,12 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
     # Get project structure for phase/block metadata
     project_structure = config.get('PROJECT_STRUCTURE', {})
     
-    # Get summary statistics (will use accommodation data if available)
+    # Get summary statistics (will use accommodation data if available, even with 0 certs)
     summary = get_apartment_certificate_summary(categorized, apartment_certs, cert_tracking, accom_data, project_structure)
     
     # Calculate end column based on max blocks (E + max_blocks_per_phase + 2 for spacing)
     end_col = 5 + max_blocks_per_phase + 2  # Start at E (5), add blocks, add 2 for spacing
-    end_col_letter = ws.cell(row=1, column=end_col).column_letter
+    end_col_letter = get_column_letter(end_col)
     
     # Section header - dynamic based on max blocks
     ws[f'A{start_row}'] = 'APARTMENT CERTIFICATE TRACKING'
@@ -128,43 +205,46 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
     
     # Overall progress bar
     overall = summary['overall_progress']
-    total_possible = overall['total_max_apartments'] * len(apartment_certs)
+    # total_max_apartments is already summed across all certificate types, don't multiply again
+    total_possible = overall['total_max_apartments']
     
-    ws[f'A{start_row}'] = 'Overall Certificate Progress'
-    ws[f'A{start_row}'].font = Font(name='Calibri', size=12, bold=True)
-    
-    ws[f'B{start_row}'] = f"{overall['total_apartments_with_docs']}/{total_possible}"
-    ws[f'C{start_row}'] = f"{overall['overall_progress_percentage']}%"
-    ws[f'D{start_row}'] = overall['total_documents']
-    ws[f'D{start_row}'].alignment = Alignment(horizontal='center')
-    
-    # Add visual progress bar in merged cells - dynamic based on max blocks
-    progress_pct = overall['overall_progress_percentage']
-    # Calculate end column based on max blocks (E + max_blocks_per_phase + 2 for spacing)
+    # Calculate end column for progress bar (needed for header)
     end_col = 5 + max_blocks_per_phase + 2  # Start at E (5), add blocks, add 2 for spacing
-    end_col_letter = ws.cell(row=1, column=end_col).column_letter
     
-    ws.merge_cells(f'E{start_row}:{end_col_letter}{start_row}')
+    # Add header row for overall progress
+    # Column A (empty but styled)
+    ws[f'A{start_row}'] = ''
+    ws[f'A{start_row}'].fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
     
-    # Calculate progress bar length based on available space (more blocks = longer bar)
-    bar_length = min(60, max(30, max_blocks_per_phase * 10))  # Much longer bars: scale with blocks, min 30, max 60
-    filled_blocks = int(progress_pct / 100 * bar_length)
-    empty_blocks = bar_length - filled_blocks
+    # Column B (Total Certs)
+    ws[f'B{start_row}'] = 'Total Certs'
+    ws[f'B{start_row}'].font = Font(name='Calibri', size=10, bold=True)
+    ws[f'B{start_row}'].fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+    ws[f'B{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
     
-    ws[f'E{start_row}'] = f"{'█' * filled_blocks}{'░' * empty_blocks} {progress_pct}%"
-    ws[f'E{start_row}'].font = Font(name='Courier New', size=10)
-    ws[f'E{start_row}'].alignment = Alignment(horizontal='left')
+    # Column C (empty but styled)
+    ws[f'C{start_row}'] = ''
+    ws[f'C{start_row}'].fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
     
-    start_row += 2
+    # Merge cells for progress header (D through K)
+    ws.merge_cells(f'D{start_row}:K{start_row}')
+    ws[f'D{start_row}'] = 'Progress'
+    ws[f'D{start_row}'].font = Font(name='Calibri', size=10, bold=True)
+    ws[f'D{start_row}'].fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+    ws[f'D{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
     
-    # Column headers - dynamic based on max blocks
-    headers = ['Certificate Type', 'Apartments', 'Progress %', 'Documents', 'Progress Bar']
-    for col_idx, header in enumerate(headers, 1):
-        cell = ws.cell(row=start_row, column=col_idx)
-        cell.value = header
-        cell.font = Font(name='Calibri', size=11, bold=True)
-        cell.fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
-        cell.alignment = Alignment(horizontal='center', vertical='center')
+    # Add borders to all header cells (A through K)
+    for col in ['A', 'B', 'C']:
+        ws[f'{col}{start_row}'].border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+    
+    # Add borders to progress bar area (D through K = columns 4-11)
+    for col_num in range(4, 12):  # D=4 through K=11
+        cell = ws.cell(row=start_row, column=col_num)
         cell.border = Border(
             left=Side(style='thin'),
             right=Side(style='thin'),
@@ -172,18 +252,74 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
             bottom=Side(style='thin')
         )
     
-    # Merge the progress bar header across the remaining columns
-    if max_blocks_per_phase > 0:
-        progress_bar_start_col = 5  # Column E
-        progress_bar_end_col_letter = ws.cell(row=1, column=end_col).column_letter
-        ws.merge_cells(f'{ws.cell(row=1, column=progress_bar_start_col).column_letter}{start_row}:{progress_bar_end_col_letter}{start_row}')
-        # Update the merged cell content
-        progress_bar_cell = ws.cell(row=start_row, column=progress_bar_start_col)
-        progress_bar_cell.value = 'Progress Bar'
-        progress_bar_cell.font = Font(name='Calibri', size=11, bold=True)
-        progress_bar_cell.fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
-        progress_bar_cell.alignment = Alignment(horizontal='center', vertical='center')
-        progress_bar_cell.border = Border(
+    start_row += 1
+    
+    ws[f'A{start_row}'] = 'Overall Apartment Certificate Progress'
+    ws[f'A{start_row}'].font = Font(name='Calibri', size=11, bold=True)
+    ws[f'A{start_row}'].alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    
+    ws[f'B{start_row}'] = f"{overall['total_apartments_with_docs']}/{total_possible}"
+    ws[f'B{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
+    ws[f'C{start_row}'] = ''
+    ws[f'C{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
+    
+    # Add borders to data cells (A through C)
+    for col in ['A', 'B', 'C']:
+        ws[f'{col}{start_row}'].border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+    
+    # Add visual progress bar (D through K)
+    progress_pct = overall['overall_progress_percentage']
+    
+    # Merge cells for progress bar (D to K)
+    ws.merge_cells(f'D{start_row}:K{start_row}')
+    
+    # Create visual progress bar using data bar
+    add_progress_bar(ws, f'D{start_row}', progress_pct)
+    
+    # Add border to entire merged progress bar area (D through K = columns 4-11)
+    for col_num in range(4, 12):  # D=4 through K=11
+        cell = ws.cell(row=start_row, column=col_num)
+        cell.border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+    
+    start_row += 2
+    
+    # Column headers
+    headers = ['Certificate Type', 'Apartments', '', 'Progress Bar']
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=start_row, column=col_idx)
+        cell.value = header
+        cell.font = Font(name='Calibri', size=11, bold=True)
+        cell.fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+    
+    # Merge the progress bar header from D to K
+    ws.merge_cells(f'D{start_row}:K{start_row}')
+    progress_bar_cell = ws.cell(row=start_row, column=4)
+    progress_bar_cell.value = 'Progress Bar'
+    progress_bar_cell.font = Font(name='Calibri', size=11, bold=True)
+    progress_bar_cell.fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+    progress_bar_cell.alignment = Alignment(horizontal='center', vertical='center')
+    
+    # Add borders to progress bar header cells (D through K = columns 4-11)
+    for col_num in range(4, 12):
+        cell = ws.cell(row=start_row, column=col_num)
+        cell.border = Border(
             left=Side(style='thin'),
             right=Side(style='thin'),
             top=Side(style='thin'),
@@ -212,44 +348,29 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
         ws[f'B{start_row}'].font = Font(name='Calibri', size=10)
         ws[f'B{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
         
-        # Progress percentage
-        ws[f'C{start_row}'] = f"{progress_pct}%"
-        ws[f'C{start_row}'].font = Font(name='Calibri', size=10, bold=True)
+        # Column C (empty)
+        ws[f'C{start_row}'] = ''
         ws[f'C{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
         
-        # Color code based on progress
-        if progress_pct >= 80:
-            fill_color = '25E82C'  # Green
-        elif progress_pct >= 50:
-            fill_color = 'EDDDA1'  # Yellow
-        elif progress_pct >= 25:
-            fill_color = 'FFA500'  # Orange
-        else:
-            fill_color = 'ED1111'  # Red
+        # Merge cells for progress bar (D through K)
+        ws.merge_cells(f'D{start_row}:K{start_row}')
         
-        ws[f'C{start_row}'].fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type='solid')
+        # Create visual progress bar using data bar
+        add_progress_bar(ws, f'D{start_row}', progress_pct)
         
-        # Document count
-        ws[f'D{start_row}'] = doc_count
-        ws[f'D{start_row}'].font = Font(name='Calibri', size=10)
-        ws[f'D{start_row}'].alignment = Alignment(horizontal='center', vertical='center')
-        
-        # Progress bar (horizontal bar using block characters) - dynamic width
-        # Scale bar length with available space (more blocks = longer bar)
-        bar_length = min(60, max(30, max_blocks_per_phase * 10))  # Much longer bars: scale with blocks, min 30, max 60
-        filled_blocks = int(progress_pct / 100 * bar_length)
-        empty_blocks = bar_length - filled_blocks
-        
-        # Merge progress bar across all available columns
-        progress_bar_end_col_letter = ws.cell(row=1, column=end_col).column_letter
-        ws.merge_cells(f'E{start_row}:{progress_bar_end_col_letter}{start_row}')
-        ws[f'E{start_row}'] = f"{'█' * filled_blocks}{'░' * empty_blocks} {progress_pct}%"
-        ws[f'E{start_row}'].font = Font(name='Courier New', size=10)
-        ws[f'E{start_row}'].alignment = Alignment(horizontal='left', vertical='center')
-        
-        # Add borders
-        for col in ['A', 'B', 'C', 'D', 'E']:
+        # Add borders to all cells in the row
+        for col in ['A', 'B', 'C']:
             ws[f'{col}{start_row}'].border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+        
+        # Add border to entire merged progress bar area (D through K = columns 4-11)
+        for col_num in range(4, 12):  # D=4 through K=11
+            cell = ws.cell(row=start_row, column=col_num)
+            cell.border = Border(
                 left=Side(style='thin'),
                 right=Side(style='thin'),
                 top=Side(style='thin'),
@@ -267,7 +388,7 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
         ws[f'A{start_row}'].font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
         ws[f'A{start_row}'].fill = PatternFill(start_color='5B9BD5', end_color='5B9BD5', fill_type='solid')
         # Merge header across all columns that will be used
-        end_col_letter = ws.cell(row=1, column=end_col).column_letter
+        end_col_letter = get_column_letter(end_col)
         ws.merge_cells(f'A{start_row}:{end_col_letter}{start_row}')
         start_row += 2
         
@@ -303,15 +424,13 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
                 ws[f'A{start_row}'] = display_name
                 ws[f'A{start_row}'].font = Font(name='Calibri', size=10)
                 
-                # Progress info in column B
-                ws[f'B{start_row}'] = f"{apts}/{max_apts} ({pct}%)"
+                # Progress info in column B (apartments count only, percentage shown in column C)
+                ws[f'B{start_row}'] = f"{apts}/{max_apts}"
                 ws[f'B{start_row}'].font = Font(name='Calibri', size=10)
                 ws[f'B{start_row}'].alignment = Alignment(horizontal='center')
                 
-                # Mini progress bar in column C
-                filled = int(pct / 10)  # 10 blocks = 100%
-                ws[f'C{start_row}'] = f"{'█' * filled}{'░' * (10 - filled)}"
-                ws[f'C{start_row}'].font = Font(name='Courier New', size=9)
+                # Mini progress indicator in column C - use data bar
+                add_progress_bar(ws, f'C{start_row}', pct)
                 
                 # Dynamic block breakdown starting from column D
                 if sorted_blocks:
@@ -367,19 +486,22 @@ def add_data_quality_section(ws, latest_data, config, start_row=5):
     ws[f'A{start_row}'].font = Font(name='Calibri', size=11, bold=True, color='ED1111')
     start_row += 1
     
-    # Get rejected certificates (Status C)
-    status_mappings = config.get('STATUS_MAPPINGS', {})
-    status_c_values = []
-    
-    if 'Status C' in status_mappings:
-        status_c_values = status_mappings['Status C'].get('statuses', [])
-    
-    # Filter for rejected certificates using config
-    if status_c_values and 'Status' in latest_data.columns:
-        rejected = latest_data[latest_data['Status'].isin(status_c_values)]
+    # Get rejected certificates (Status C) - handle empty data
+    if latest_data.empty or 'Status' not in latest_data.columns:
+        rejected = pd.DataFrame()
     else:
-        # Fallback: look for common rejected status terms
-        rejected = latest_data[latest_data['Status'].str.contains('reject|Reject|REJECT|C-', case=False, na=False)]
+        status_mappings = config.get('STATUS_MAPPINGS', {})
+        status_c_values = []
+        
+        if 'Status C' in status_mappings:
+            status_c_values = status_mappings['Status C'].get('statuses', [])
+        
+        # Filter for rejected certificates using config
+        if status_c_values:
+            rejected = latest_data[latest_data['Status'].isin(status_c_values)]
+        else:
+            # Fallback: look for common rejected status terms
+            rejected = latest_data[latest_data['Status'].str.contains('reject|Reject|REJECT|C-', case=False, na=False)]
     
     if rejected.empty:
         ws[f'A{start_row}'] = '  ✓ No rejected certificates'
@@ -416,44 +538,46 @@ def add_data_quality_section(ws, latest_data, config, start_row=5):
     ws[f'A{start_row}'].font = Font(name='Calibri', size=11, bold=True, color='C00000')
     start_row += 1
     
-    if apartment_certs:
+    if apartment_certs and not latest_data.empty:
         categorized = categorize_documents(latest_data, apartment_certs, cert_tracking)
         uncategorized = get_uncategorized_certificates_in_blocks(latest_data, categorized)
-        
-        if uncategorized.empty:
+    else:
+        uncategorized = pd.DataFrame()
+    
+    if uncategorized.empty:
+        if latest_data.empty:
+            ws[f'A{start_row}'] = '  ℹ No certificates to categorize yet'
+            ws[f'A{start_row}'].font = Font(name='Calibri', size=10, italic=True, color='666666')
+        else:
             ws[f'A{start_row}'] = '  ✓ All certificates in block folders are properly categorized'
             ws[f'A{start_row}'].font = Font(name='Calibri', size=10, italic=True, color='25E82C')
-            start_row += 2
-        else:
-            ws[f'A{start_row}'] = '  Certificates in block folders but missing valid plot numbers (or certificate title/description):'
-            ws[f'A{start_row}'].font = Font(name='Calibri', size=10, italic=True)
-            start_row += 1
-            
-            # Count by block
-            block_counts = uncategorized['extracted_block'].value_counts().sort_index()
-            ws[f'A{start_row}'] = f'  Total Uncategorized:'
-            ws[f'B{start_row}'] = len(uncategorized)
-            ws[f'A{start_row}'].font = Font(name='Calibri', size=10, bold=True)
-            ws[f'B{start_row}'].font = Font(name='Calibri', size=10, bold=True, color='C00000')
-            start_row += 1
-            
-            for block, count in block_counts.items():
-                ws[f'A{start_row}'] = f'    Block {block}:'
-                ws[f'B{start_row}'] = count
-                ws[f'A{start_row}'].font = Font(name='Calibri', size=9)
-                ws[f'B{start_row}'].font = Font(name='Calibri', size=9, color='C00000')
-                start_row += 1
-            
-            start_row += 1
-            
-            # Note about detailed uncategorized report
-            ws[f'A{start_row}'] = '  Detailed uncategorized certificates moved to separate tab for analysis'
-            ws[f'A{start_row}'].font = Font(name='Calibri', size=9, italic=True, color='666666')
-            ws.merge_cells(f'A{start_row}:D{start_row}')
-            start_row += 1
+        start_row += 2
     else:
-        ws[f'A{start_row}'] = '  Certificate tracking not configured for this project'
+        ws[f'A{start_row}'] = '  Certificates in block folders but missing valid plot numbers (or certificate title/description):'
         ws[f'A{start_row}'].font = Font(name='Calibri', size=10, italic=True)
+        start_row += 1
+        
+        # Count by block
+        block_counts = uncategorized['extracted_block'].value_counts().sort_index()
+        ws[f'A{start_row}'] = f'  Total Uncategorized:'
+        ws[f'B{start_row}'] = len(uncategorized)
+        ws[f'A{start_row}'].font = Font(name='Calibri', size=10, bold=True)
+        ws[f'B{start_row}'].font = Font(name='Calibri', size=10, bold=True, color='C00000')
+        start_row += 1
+        
+        for block, count in block_counts.items():
+            ws[f'A{start_row}'] = f'    Block {block}:'
+            ws[f'B{start_row}'] = count
+            ws[f'A{start_row}'].font = Font(name='Calibri', size=9)
+            ws[f'B{start_row}'].font = Font(name='Calibri', size=9, color='C00000')
+            start_row += 1
+        
+        start_row += 1
+        
+        # Note about detailed uncategorized report
+        ws[f'A{start_row}'] = '  Detailed uncategorized certificates moved to separate tab for analysis'
+        ws[f'A{start_row}'].font = Font(name='Calibri', size=9, italic=True, color='666666')
+        ws.merge_cells(f'A{start_row}:D{start_row}')
         start_row += 1
     
     start_row += 2
@@ -466,8 +590,8 @@ def add_uncategorized_detailed_tab(wb, latest_data, config):
     cert_tracking = config.get('CERTIFICATE_TRACKING', {})
     apartment_certs = cert_tracking.get('apartment_certificates', {})
     
-    if not apartment_certs:
-        return  # No apartment tracking configured
+    if not apartment_certs or latest_data.empty:
+        return  # No apartment tracking configured or no data
     
     # Create detailed uncategorized tab
     ws = wb.create_sheet("Uncategorized Analysis")
@@ -626,22 +750,32 @@ def save_certificate_report(summary_df, latest_data, output_file, config):
         
         # Add title and project info
         project_title = config.get('PROJECT_TITLE', 'Project')
-        cert_settings = config.get('CERTIFICATE_SETTINGS', {})
         
         overall_summary['A1'] = f"{project_title} - Certificate Report"
-        overall_summary['A1'].font = Font(name='Calibri', size=16, bold=True)
-        overall_summary['A1'].alignment = Alignment(horizontal='left', vertical='center')
+        overall_summary['A1'].font = Font(name='Calibri', size=16, bold=True, color='FFFFFF')
+        overall_summary['A1'].fill = PatternFill(start_color='203864', end_color='203864', fill_type='solid')
+        overall_summary['A1'].alignment = Alignment(horizontal='center', vertical='center')
+        overall_summary.merge_cells('A1:K1')
+        overall_summary.row_dimensions[1].height = 25
         
-        # Get latest row from summary
-        latest_row = summary_df.iloc[-1] if not summary_df.empty else {}
-        latest_date = latest_row.get('Date', 'N/A')
-        latest_time = latest_row.get('Time', 'N/A')
+        # Format report date in readable format (e.g., "28th October 2025")
+        now = datetime.now()
+        day = now.day
+        # Add ordinal suffix (1st, 2nd, 3rd, 4th, etc.)
+        if 4 <= day <= 20 or 24 <= day <= 30:
+            suffix = "th"
+        else:
+            suffix = ["st", "nd", "rd"][day % 10 - 1]
         
-        overall_summary['A2'] = f"Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        report_date = f"{day}{suffix} {now.strftime('%B %Y')}"
+        
+        overall_summary['A2'] = f"Report Date: {report_date}"
         overall_summary['A2'].font = Font(name='Calibri', size=10, italic=True)
+        overall_summary['A2'].alignment = Alignment(horizontal='center', vertical='center')
+        overall_summary.merge_cells('A2:K2')
         
-        overall_summary['A3'] = f"Latest Data: {latest_date} {latest_time}"
-        overall_summary['A3'].font = Font(name='Calibri', size=10, italic=True)
+        # Get latest row from summary (needed for revision data later)
+        latest_row = summary_df.iloc[-1] if not summary_df.empty else {}
         
         # Add apartment certificate tracking section if configured
         cert_tracking = config.get('CERTIFICATE_TRACKING', {})
@@ -671,9 +805,23 @@ def save_certificate_report(summary_df, latest_data, output_file, config):
             overall_summary.merge_cells(f'A{next_row}:D{next_row}')
             next_row += 2
             
-            # Count landlord/communal certificates across all blocks
-            landlord_certs_mask = latest_data['Doc Path'].fillna('').astype(str).str.contains(r'\\Landlords\\', case=False, na=False, regex=True)
-            landlord_certs = latest_data[landlord_certs_mask]
+            # Count landlord/communal certificates
+            # Strategy 1: Try path-based detection (for projects with "\Landlords\" folders)
+            landlord_certs = pd.DataFrame()
+            if not latest_data.empty and 'Doc Path' in latest_data.columns:
+                landlord_certs_mask = latest_data['Doc Path'].fillna('').astype(str).str.contains(r'\\Landlords\\', case=False, na=False, regex=True)
+                landlord_certs = latest_data[landlord_certs_mask]
+            
+            # Strategy 2: If path filtering didn't find landlord certs, calculate as uncategorized
+            # (Total certificates - apartment certificates = landlord/communal certificates)
+            if len(landlord_certs) == 0 and not latest_data.empty:
+                # Get categorized apartment certificates from add_apartment_certificate_tracking
+                cert_tracking = config.get('CERTIFICATE_TRACKING', {})
+                apartment_certs_config = cert_tracking.get('apartment_certificates', {})
+                categorized_df = categorize_documents(latest_data, apartment_certs_config, cert_tracking)
+                
+                # Landlord certs = certificates with no category assigned
+                landlord_certs = categorized_df[categorized_df['category'].isna()]
             
             # Show count of landlord/communal certificates
             overall_summary[f'A{next_row}'] = 'Landlord/Communal Certificates:'

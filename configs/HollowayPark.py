@@ -43,12 +43,6 @@ DRAWING_SETTINGS = {
     'enabled': False  # No file type column, so include all documents
 }
 
-# Certificate settings (not applicable for this project)
-CERTIFICATE_SETTINGS = {
-    'enabled': False,
-    'generate_report': False
-}
-
 # Technical Submittal Settings
 TECHNICAL_SUBMITTAL_SETTINGS = {
     'enabled': False,
@@ -140,12 +134,257 @@ ACCOMMODATION_SCHEDULE_CONFIG = {
     },
     'bedrooms_cleaning': {
         'extract_pattern': r'^(\d+)'     # Extract first digit from codes like '3B4P'
+    },
+    # Postal address extraction (optional) - DISABLED for this project
+    # Enable this when postal addresses become available in the accommodation schedule
+    'postal_address_extraction': {
+        'enabled': False,  # Set to True when addresses are available
+        'flat_no': {
+            'source_column': None,  # Specify column name when enabling
+            'extract_pattern': None
+        },
+        'address_line1': {
+            'source_column': None,
+            'extract_pattern': None,
+            'strip': True
+        },
+        'address_line2': {
+            'enabled': False
+        },
+        'city': {
+            'enabled': False
+        },
+        'postcode': {
+            'source_column': None,
+            'extract_pattern': None,
+            'strip': True
+        }
+    }
+}
+
+# ============================================================================
+# PROJECT STRUCTURE - Centralized metadata for phases, blocks, floors
+# ============================================================================
+# This section contains structural information about the project that reports
+# and analyzers reference. Makes it easy to maintain across all reports.
+PROJECT_STRUCTURE = {
+    # Phase metadata
+    'phases': {
+        'C': {
+            'display_name': 'Phase C',
+            'description': 'Phase C development',
+            'blocks': ['C1', 'C2']
+        },
+        'D': {
+            'display_name': 'Phase D',
+            'description': 'Phase D development',
+            'blocks': ['D1', 'D2', 'D3']
+        },
+        'E': {
+            'display_name': 'Phase E',
+            'description': 'Phase E development',
+            'blocks': ['E1', 'E2']
+        }
+    },
+    
+    # Block metadata - expected floors per block (for layout tracking)
+    # These are the floors we expect to see in communal layouts
+    # Ground (0) and roof floors are NOT included - only added if detected
+    'blocks': {
+        'C1': {
+            'expected_floors': list(range(1, 13)),  # Floors 1-12
+            'phase': 'C'
+        },
+        'C2': {
+            'expected_floors': list(range(1, 10)),  # Floors 1-9
+            'phase': 'C'
+        },
+        'D1': {
+            'expected_floors': list(range(1, 9)),   # Floors 1-8 (ground excluded)
+            'phase': 'D'
+        },
+        'D2': {
+            'expected_floors': list(range(1, 8)),   # Floors 1-7 (ground excluded)
+            'phase': 'D'
+        },
+        'D3': {
+            'expected_floors': list(range(1, 7)),   # Floors 1-6 (ground excluded)
+            'phase': 'D'
+        },
+        'E1': {
+            'expected_floors': list(range(1, 7)),   # Floors 1-6 (ground excluded)
+            'phase': 'E'
+        },
+        'E2': {
+            'expected_floors': list(range(1, 7)),   # Floors 1-6 (ground excluded)
+            'phase': 'E'
+        }
+    }
+}
+
+# ============================================================================
+# CERTIFICATE TRACKING - Consolidated certificate configuration
+# ============================================================================
+# Set enabled=True and configure patterns when ready to track certificates
+CERTIFICATE_TRACKING = {
+    # Enable/disable certificate tracking and report generation
+    'enabled': True,  # TODO: Enable when ready to track certificates
+    'generate_report': True,
+    
+    # Document detection - which documents ARE certificates?
+    'document_detection': {
+        # File type filtering - match by File Type column
+        'file_type_filter': {
+            'enabled': True,
+            'column_name': 'File Type',
+            'certificate_types': ['CE - Certificate (CE)']
+        },
+        # Doc Ref filtering - match by patterns in Doc Ref
+        'doc_ref_filter': {
+            'enabled': True,
+            'column_name': 'Doc Ref',
+            'patterns': ['CE']  # 2-letter codes to match in Doc Ref
+        },
+        # Path filtering - distinguish apartment vs communal certificates
+        'path_filter': {
+            'enabled': True,
+            # Include only certificates in block-specific folders (apartment certificates)
+            'include_patterns': [
+                r'\\Block\s*-\s*[CDE]\d\\',  # Match "\Block - C1\", "\Block-D2\", etc.
+                r'\\Block\s*[CDE]\d\\',      # Alternative: "\BlockC1\", "\BlockD2\", etc.
+            ],
+            # Exclude certificates in landlord/communal folders
+            'exclude_patterns': [
+                r'\\Landlords\\',  # Landlord/communal certificates
+                r'\\Communal\\',   # Communal areas
+            ]
+        }
+    },
+    
+    # Metadata extraction - extract phase/block from document metadata
+    'phase_detection': {
+        'patterns': [r'Phase\s*([CDE])', r'\b([CDE])\d\b'],  # Match Phase C, D, E or C1, D2, E1, etc.
+        'doc_title_patterns': [r'Plot\s+(\d+)'],  # Extract plot number from doc title
+        'doc_ref_patterns': []
+    },
+    
+    'block_detection': {
+        'patterns': [
+            r'\bBlock\s*-?\s*([CDE]\d)\b',  # Match "Block C1", "Block-C1", "Block C2", etc.
+            r'\b([CDE]\d)\s+Block\b',       # Match "C1 Block", "D2 Block", etc.
+            r'\\Block\s*-?\s*([CDE]\d)\\',  # Match in paths: "\Block-C1\", "\BlockC1\"
+        ],
+        'doc_title_patterns': []
+    },
+    
+    # Certificate categories to track (for apartment certificates)
+    # NOTE: max_count is automatically derived from ACCOMMODATION_DATA['total_apartments']
+    'apartment_certificates': {
+        'part_p': {
+            'patterns': ['Part P'],
+            'display_name': 'Part P'
+        },
+        'electrical_cert': {
+            'patterns': ['Electrical Cert'],
+            'display_name': 'Electrical Cert'
+        },
+        'mvhr_ventilation': {
+            'patterns': ['MVHR Cert', 'MVHR'],
+            'display_name': 'MVHR / Ventilation'
+        },
+        'apartment_flushing': {
+            'patterns': ['Apartment Flushing Certificate', 'Apartment Flushing'],
+            'display_name': 'Apartment Flushing'
+        },
+        'fire_alarm': {
+            'patterns': ['FA Cert', 'FA CERT', 'Fire'],
+            'display_name': 'Fire Alarm'
+        },
+        'data_network': {
+            'patterns': ['Data Network Cert', 'DATA NETWORK'],
+            'display_name': 'Data Network'
+        },
+        'irs': {
+            'patterns': ['IRS Cert', 'IRS'],
+            'display_name': 'IRS'
+        },
+        'hiu_heating': {
+            'patterns': ['HIU Cert', 'Heat'],
+            'display_name': 'HIU / Heating'
+        },
+        'water_quality': {
+            'patterns': ['Water Quality Cert', 'Water Quality'],
+            'display_name': 'Water Quality'
+        }
     }
 }
 
 # Accommodation Data - Imported from separate file
 # Run scripts/update_accommodation_data.py to regenerate
 from configs.accommodation_data.HollowayPark import ACCOMMODATION_DATA
+
+# ============================================================================
+# APARTMENT LAYOUT TRACKING - Configuration for layout reports
+# ============================================================================
+# Set enabled=True and configure patterns when ready to track layouts
+APARTMENT_LAYOUT_TRACKING = {
+    'enabled': True,  # Enabled - will generate empty report until patterns are configured
+    
+    'detection': {
+        'file_type_patterns': [],  # TODO: Add patterns like ['DR'] for drawings
+        'doc_ref_patterns': [],
+        'exclude_patterns': ['Schedule', 'Detail', 'Section', 'Elevation'],
+    },
+    
+    'categories': {
+        'apartment_layouts': {
+            'enabled': False,  # TODO: Set to True when ready
+            
+            'layout_types': {
+                # TODO: Add apartment layout types
+                # Example:
+                # 'ventilation': {
+                #     'display_name': 'Ventilation Apartment Layout',
+                #     'patterns': ['Ventilation Apartment Layout'],
+                #     'doc_ref_patterns': [],
+                #     'required': True,
+                #     'description': 'Ventilation apartment layout'
+                # }
+            },
+            
+            'apartment_type_detection': {
+                'title_patterns': [],  # TODO: Add patterns to extract apartment types
+                'doc_ref_patterns': [],
+                'path_patterns': []
+            }
+        },
+        
+        'communal_layouts': {
+            'enabled': False,  # TODO: Set to True when ready
+            # NOTE: Expected floors per block are now defined in PROJECT_STRUCTURE['blocks']
+            'layout_types': {
+                # TODO: Add communal layout types
+                # Example:
+                # 'mechanical_services': {
+                #     'display_name': 'Mechanical Services Layout',
+                #     'patterns': ['Mechanical services layout'],
+                #     'doc_ref_patterns': [],
+                #     'required': False,
+                #     'description': 'Mechanical services communal layout'
+                # }
+            },
+            'coverage_detection': {
+                'floor_patterns': [
+                    r'Level\s+(\d+)',
+                    r'Level\s+(\d+)-(\d+)',
+                    r'Level\s+(\d+)\s+to\s+(\d+)',
+                    r'Ground Floor',
+                    r'Roof Level',
+                ]
+            }
+        }
+    }
+}
 
 
 # Custom status mapping for Holloway Park

@@ -8,7 +8,7 @@ def filter_certificates(df, config):
     """
     Filter documents to return only certificates based on project config.
     
-    Supports two filtering methods:
+    Uses CERTIFICATE_TRACKING.document_detection to identify certificates by:
     1. File type column matching (e.g., 'CT - Certificate (CT)')
     2. Doc Ref pattern matching (e.g., 2-letter codes like 'CT', 'CE')
     
@@ -22,14 +22,15 @@ def filter_certificates(df, config):
     if df.empty:
         return df
     
-    cert_settings = config.get('CERTIFICATE_SETTINGS', {})
-    if not cert_settings.get('enabled', False):
+    cert_tracking = config.get('CERTIFICATE_TRACKING', {})
+    if not cert_tracking.get('enabled', False):
         return pd.DataFrame()  # Return empty DataFrame if certificates not enabled
     
+    document_detection = cert_tracking.get('document_detection', {})
     mask = pd.Series([False] * len(df), index=df.index)
     
     # Method 1: File type column filtering
-    file_type_filter = cert_settings.get('file_type_filter', {})
+    file_type_filter = document_detection.get('file_type_filter', {})
     if file_type_filter.get('enabled', False):
         file_type_col = file_type_filter.get('column_name')
         cert_types = file_type_filter.get('certificate_types', [])
@@ -44,10 +45,10 @@ def filter_certificates(df, config):
                 mask = mask | type_mask
     
     # Method 2: Doc Ref pattern filtering
-    doc_ref_filter = cert_settings.get('doc_ref_filter', {})
+    doc_ref_filter = document_detection.get('doc_ref_filter', {})
     if doc_ref_filter.get('enabled', False):
         doc_ref_col = doc_ref_filter.get('column_name', 'Doc Ref')
-        cert_patterns = doc_ref_filter.get('certificate_patterns', [])
+        cert_patterns = doc_ref_filter.get('patterns', [])
         
         if doc_ref_col in df.columns and cert_patterns:
             for pattern in cert_patterns:

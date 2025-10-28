@@ -12,7 +12,7 @@ import re
 from typing import Dict, List, Tuple, Optional
 
 
-def extract_apartment_number(doc_title: str, doc_ref: str = "", doc_path: str = "", category: str = None) -> Optional[int]:
+def extract_apartment_number(doc_title: str, doc_ref: str = "", doc_path: str = "", category: str = None, path_filter_config: Dict = None) -> Optional[int]:
     """
     Extract apartment number from document metadata.
     
@@ -28,6 +28,8 @@ def extract_apartment_number(doc_title: str, doc_ref: str = "", doc_path: str = 
         doc_title: Document title
         doc_ref: Document reference (optional)
         doc_path: Document path (optional)
+        category: Category name (for specialized extraction logic)
+        path_filter_config: Optional path filter configuration for apartment vs communal detection
         
     Returns:
         Apartment number if found, None otherwise
@@ -53,27 +55,55 @@ def extract_apartment_number(doc_title: str, doc_ref: str = "", doc_path: str = 
     if unit_match:
         return int(unit_match.group(1))
     
-    # Pattern 3: "Apt XXX" or "APT XXX"
+    # Pattern 3: "B###" format (OvalBlockB specific - e.g., "B112", "B151")
+    # This pattern matches "B" followed by 3 digits at word boundary
+    b_code_match = re.search(r'\bB(\d{3})\b', search_text)
+    if b_code_match:
+        # Return the 3-digit code as the apartment identifier
+        # B112 → 112, B151 → 151
+        return int(b_code_match.group(1))
+    
+    # Pattern 4: "Apt XXX" or "APT XXX"
     apt_match = re.search(r'APT\s+(\d{1,4})', search_text)
     if apt_match:
         return int(apt_match.group(1))
     
-    # Pattern 4: "Flat XXX" or "FLAT XXX" (lower priority - might be postal address)
+    # Pattern 5: "Flat XXX" or "FLAT XXX" (lower priority - might be postal address)
     flat_match = re.search(r'FLAT\s+(\d{1,4})', search_text)
     if flat_match:
         return int(flat_match.group(1))
     
     # PRIMARY FILTER: Use document path to distinguish landlord/communal vs apartment certificates
-    # For Greenwich Peninsula: 
-    # - Landlord/communal certs: \18.XX\Landlords\ (EXCLUDE these)
-    # - Apartment certificates: \18.XX\Block - X\ (INCLUDE these - any cert type folder within blocks)
-    if '\\Landlords\\' in doc_path or '/Landlords/' in doc_path:
-        return None
-    
-    # Only process documents that are in block-specific folders (apartment certificates)
-    # Must be in format: \18.XX\Block - X\ (where X is A, B, C, D, E, F, G)
-    if not re.search(r'\\Block\s*-\s*[A-G]\\', doc_path):
-        return None
+    # If path_filter_config is provided, use it; otherwise use legacy hardcoded patterns
+    if path_filter_config and path_filter_config.get('enabled', False):
+        # Check exclude patterns (e.g., \Landlords\)
+        exclude_patterns = path_filter_config.get('exclude_patterns', [])
+        for pattern in exclude_patterns:
+            if re.search(pattern, doc_path, re.IGNORECASE):
+                return None
+        
+        # Check include patterns (e.g., \Block - X\)
+        include_patterns = path_filter_config.get('include_patterns', [])
+        if include_patterns:
+            matches_include = False
+            for pattern in include_patterns:
+                if re.search(pattern, doc_path, re.IGNORECASE):
+                    matches_include = True
+                    break
+            if not matches_include:
+                return None
+    else:
+        # Legacy hardcoded patterns for backward compatibility
+        # For Greenwich Peninsula: 
+        # - Landlord/communal certs: \18.XX\Landlords\ (EXCLUDE these)
+        # - Apartment certificates: \18.XX\Block - X\ (INCLUDE these - any cert type folder within blocks)
+        if '\\Landlords\\' in doc_path or '/Landlords/' in doc_path:
+            return None
+        
+        # Only process documents that are in block-specific folders (apartment certificates)
+        # Must be in format: \18.XX\Block - X\ (where X is A, B, C, D, E, F, G)
+        if not re.search(r'\\Block\s*-\s*[A-G]\\', doc_path):
+            return None
     
     # GENERIC APPROACH: For all certificates in block folders, we're more lenient
     # Certificates might be misnamed but we still want to count them if they're in block folders
@@ -212,14 +242,16 @@ def categorize_documents(df: pd.DataFrame, tracking_config: Dict, full_tracking_
     Returns:
         DataFrame with added 'category', 'apartment_number', 'phase', and 'block' columns
     """
-    if df.empty:
-        return df
-    
     result_df = df.copy()
+    
+    # Always add columns, even for empty DataFrame (needed for progress calculation)
     result_df['category'] = None  # Don't assign default category - only assign if valid match found
     result_df['apartment_number'] = None
     result_df['phase'] = None
     result_df['block'] = None
+    
+    if df.empty:
+        return result_df
     
     # Extract phase and block information if configured
     if full_tracking_config:
@@ -279,13 +311,20 @@ def categorize_documents(df: pd.DataFrame, tracking_config: Dict, full_tracking_
                 )
                 mask = mask | path_mask
         
+        # Get path filter config from full_tracking_config if available
+        path_filter_config = None
+        if full_tracking_config:
+            document_detection = full_tracking_config.get('document_detection', {})
+            path_filter_config = document_detection.get('path_filter', {})
+        
         # Extract apartment numbers for matching documents and only categorize if apartment number exists
         for idx in df[mask].index:
             apartment_num = extract_apartment_number(
                 df.loc[idx, 'Doc Title'],
                 df.loc[idx, 'Doc Ref'] if 'Doc Ref' in df.columns else "",
                 df.loc[idx, 'Doc Path'] if 'Doc Path' in df.columns else "",
-                category_name
+                category_name,
+                path_filter_config
             )
             # Only categorize if we successfully extracted a valid apartment number
             # This ensures data integrity and highlights missing/misnamed certificates
@@ -399,7 +438,7 @@ def calculate_category_progress(categorized_df: pd.DataFrame, tracking_config: D
             'documents_count': len(category_docs),
             'apartments_with_docs': apartments_with_docs,
             'max_apartments': max_count,
-            'progress_percentage': round(progress_pct, 1),
+            'progress_percentage': round(progress_pct),
             'remaining_apartments': max_count - apartments_with_docs
         }
     
@@ -434,7 +473,7 @@ def get_overall_progress(progress_stats: Dict) -> Dict:
         'total_documents': total_documents,
         'total_apartments_with_docs': total_apartments_with_docs,
         'total_max_apartments': total_max_apartments,
-        'overall_progress_percentage': round(overall_progress, 1)
+        'overall_progress_percentage': round(overall_progress)
     }
 
 
@@ -489,7 +528,7 @@ def calculate_progress_by_phase_block(categorized_df: pd.DataFrame, tracking_con
                 'documents_count': len(category_docs),
                 'apartments_with_docs': apartments_with_docs,
                 'max_apartments': phase_apartment_count,
-                'progress_percentage': round((apartments_with_docs / phase_apartment_count * 100), 1) if phase_apartment_count > 0 else 0
+                'progress_percentage': round((apartments_with_docs / phase_apartment_count * 100)) if phase_apartment_count > 0 else 0
             }
         
         # Calculate progress for each block in this phase
@@ -861,6 +900,8 @@ def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
     result_df = pd.DataFrame(expanded_rows)
     
     # Extract phase and block for categorized layouts
+    block_detection_config = layout_tracking_config.get('block_detection', {})
+    
     for idx in result_df[result_df['category'].notna()].index:
         doc_title = result_df.loc[idx, 'Doc Title']
         doc_ref = result_df.loc[idx, 'Doc Ref'] if 'Doc Ref' in result_df.columns else ""
@@ -871,8 +912,8 @@ def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
         if phase:
             result_df.loc[idx, 'phase'] = phase
         
-        # Extract block
-        block = extract_block(doc_title, doc_ref, doc_path, layout_tracking_config)
+        # Extract block using proper block_detection config
+        block = extract_block(doc_title, doc_ref, doc_path, block_detection_config)
         if block:
             result_df.loc[idx, 'block'] = block
     
@@ -958,12 +999,16 @@ def calculate_apartment_layout_progress(categorized_df: pd.DataFrame,
         duplicate_types = type_counts[type_counts > 1]
         total_duplicates = (duplicate_types - 1).sum()  # Extra documents beyond the first
         
+        # Get greylisted apartment types (optional types that don't count as missing)
+        greylisted_types = set(layout_config.get('greylisted_apartment_types', []))
+        
         # Calculate missing types with normalized matching (case + leading zeros)
         # Create a mapping of normalized -> original for found types
         found_types_map = {normalize_type_code(t): t for t in types_with_layout}
         
         # Check which expected types are missing (normalized matching)
         missing_types = set()
+        greylisted_missing_types = set()
         types_matched = set()
         
         for expected_type in expected_types:
@@ -972,14 +1017,19 @@ def calculate_apartment_layout_progress(categorized_df: pd.DataFrame,
                 # Found (normalized match)
                 types_matched.add(expected_type)
             else:
-                # Missing
-                missing_types.add(expected_type)
+                # Check if this type is greylisted
+                if expected_type in greylisted_types or normalize_type_code(expected_type) in {normalize_type_code(t) for t in greylisted_types}:
+                    greylisted_missing_types.add(expected_type)
+                else:
+                    # Missing (and required)
+                    missing_types.add(expected_type)
         
-        # Calculate percentage based on matched types (case-insensitive)
-        if total_types > 0:
-            coverage_pct = (len(types_matched) / total_types) * 100
+        # Calculate percentage based on matched types + greylisted types (both count as "complete")
+        required_types = total_types - len(greylisted_types)
+        if required_types > 0:
+            coverage_pct = (len(types_matched) / required_types) * 100
         else:
-            coverage_pct = 0
+            coverage_pct = 100 if len(types_matched) > 0 else 0
         
         # Unique document count = total docs - duplicates
         unique_document_count = len(types_with_layout)
@@ -989,7 +1039,9 @@ def calculate_apartment_layout_progress(categorized_df: pd.DataFrame,
             'types_with_layout': len(types_matched),  # Count of matched types (case-insensitive)
             'types_covered': sorted(list(types_matched)),  # Show expected types that were matched
             'missing_types': sorted(list(missing_types)),
+            'greylisted_missing_types': sorted(list(greylisted_missing_types)),  # Missing but optional
             'total_expected_types': total_types,
+            'total_required_types': required_types,  # Total minus greylisted
             'coverage_percentage': round(coverage_pct, 1),
             'document_count': len(layout_docs),  # Total documents including duplicates
             'unique_document_count': unique_document_count,  # Unique apartment types with layouts
@@ -1108,24 +1160,41 @@ def calculate_communal_layout_progress(categorized_df: pd.DataFrame,
                     coverage_by_block[block] = set()
                 coverage_by_block[block].update(covered_floors)
         
+        # Get greylisted blocks (blocks that don't require this layout)
+        greylisted_blocks = set(layout_config.get('greylisted_blocks', []))
+        
         # Calculate missing floors per block and total covered floors
         total_missing_floors = set()
+        greylisted_missing_blocks = {}  # {block: [missing floors]}
         total_covered_count = 0
+        total_required_floors = 0
         
         for block_name, expected_floors in expected_floors_by_block.items():
+            # Skip greylisted blocks in coverage calculations
+            is_greylisted = block_name in greylisted_blocks
+            
             covered_in_block = coverage_by_block.get(block_name, set())
             missing_in_block = expected_floors - covered_in_block
-            total_missing_floors.update(missing_in_block)
-            # Count how many expected floors are covered for this block
-            covered_expected_floors = expected_floors & covered_in_block
-            total_covered_count += len(covered_expected_floors)
+            
+            if is_greylisted:
+                # Track greylisted blocks separately
+                if missing_in_block:
+                    greylisted_missing_blocks[block_name] = sorted(list(missing_in_block))
+            else:
+                # Count towards required coverage
+                total_missing_floors.update(missing_in_block)
+                # Count how many expected floors are covered for this block
+                covered_expected_floors = expected_floors & covered_in_block
+                total_covered_count += len(covered_expected_floors)
+                total_required_floors += len(expected_floors)
         
-        # Calculate overall percentage using total floor count across all blocks
+        # Calculate overall percentage using only required blocks (not greylisted)
         # Each floor in each block counts separately for communal layouts
-        total_expected_floors = sum(len(expected_floors) for expected_floors in expected_floors_by_block.values())
+        total_expected_floors = sum(len(expected_floors) for block_name, expected_floors in expected_floors_by_block.items() 
+                                   if block_name not in greylisted_blocks)
         
-        if total_expected_floors > 0:
-            coverage_pct = (total_covered_count / total_expected_floors) * 100
+        if total_required_floors > 0:
+            coverage_pct = (total_covered_count / total_required_floors) * 100
         else:
             coverage_pct = 100 if total_covered_count > 0 else 0
         
@@ -1134,10 +1203,13 @@ def calculate_communal_layout_progress(categorized_df: pd.DataFrame,
             'floors_covered': total_covered_count,
             'floors_missing': sorted(list(total_missing_floors)),
             'total_expected_floors': total_expected_floors,
+            'total_required_floors': total_required_floors,  # Excludes greylisted blocks
             'coverage_percentage': round(coverage_pct, 1),
             'document_count': len(layout_docs),
             'coverage_by_block': {block: sorted(list(floors)) for block, floors in coverage_by_block.items()},
             'expected_floors_by_block': {block: sorted(list(floors)) for block, floors in expected_floors_by_block.items()},
+            'greylisted_blocks': sorted(list(greylisted_blocks)),
+            'greylisted_missing_blocks': greylisted_missing_blocks,  # {block: [missing floors]}
             'document_details': document_details,
             'coverage_type': 'block-based'
         }

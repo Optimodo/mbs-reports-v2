@@ -111,30 +111,28 @@ def get_report_type_selection():
     """Get report type selection from user.
     
     Returns:
-        str: Report type ('summary', 'progression', 'condensed', 'certificates', 'layouts') or None if cancelled
+        str: Report type ('summary', 'condensed', 'certificates', 'layouts') or None if cancelled
     """
     print("\n" + "="*60)
     print("Select Report Type:")
     print("="*60)
     print("1. Summary Report")
-    print("2. Detailed Progression Report")
-    print("3. Condensed Progression Report")
-    print("4. Certificate Report")
-    print("5. Layout Tracking Report")
-    print("6. Cancel")
+    print("2. Condensed Progression Report")
+    print("3. Certificate Report")
+    print("4. Layout Tracking Report")
+    print("5. Cancel")
     print("="*60)
     
-    choice = input("\nEnter your choice (1-6): ").strip()
+    choice = input("\nEnter your choice (1-5): ").strip()
     
     report_map = {
         '1': 'summary',
-        '2': 'progression',
-        '3': 'condensed',
-        '4': 'certificates',
-        '5': 'layouts'
+        '2': 'condensed',
+        '3': 'certificates',
+        '4': 'layouts'
     }
     
-    if choice == '6':
+    if choice == '5':
         return None
     
     return report_map.get(choice)
@@ -402,13 +400,13 @@ def generate_certificate_report_full(project_name, config, output_dir, db):
     Returns:
         bool: True if successful
     """
-    cert_settings = config.get('CERTIFICATE_SETTINGS', {})
+    cert_tracking = config.get('CERTIFICATE_TRACKING', {})
     
-    if not cert_settings.get('enabled', False):
+    if not cert_tracking.get('enabled', False):
         print(f"  ℹ Certificates not enabled for this project")
         return False
     
-    if not cert_settings.get('generate_report', False):
+    if not cert_tracking.get('generate_report', False):
         print(f"  ℹ Certificate report generation not enabled")
         return False
     
@@ -423,8 +421,7 @@ def generate_certificate_report_full(project_name, config, output_dir, db):
     cert_data = filter_certificates(latest_data_df, config)
     
     if cert_data.empty:
-        print(f"  ℹ No certificate documents found")
-        return False
+        print(f"  ℹ No certificate documents found - generating empty report")
     
     # Get all snapshots and build certificate summary dynamically
     cursor = db.conn.cursor()
@@ -452,12 +449,14 @@ def generate_certificate_report_full(project_name, config, output_dir, db):
             cert_summary_rows.append(summary_row)
     
     if not cert_summary_rows:
-        print(f"  ℹ No certificate data in snapshots")
-        return False
-    
-    cert_summary_df = pd.DataFrame(cert_summary_rows)
-    cols = ['Date', 'Time'] + [c for c in cert_summary_df.columns if c not in ['Date', 'Time']]
-    cert_summary_df = cert_summary_df[cols]
+        # No certificates found - create empty DataFrame with just Date/Time columns
+        # The report will still generate with phase/block structure based on PROJECT_STRUCTURE
+        print(f"  ℹ No certificate data in snapshots - report will show 0 progress")
+        cert_summary_df = pd.DataFrame(columns=['Date', 'Time'])
+    else:
+        cert_summary_df = pd.DataFrame(cert_summary_rows)
+        cols = ['Date', 'Time'] + [c for c in cert_summary_df.columns if c not in ['Date', 'Time']]
+        cert_summary_df = cert_summary_df[cols]
     
     project_slug = slugify(project_name)
     cert_output = output_dir / f"{project_slug}_certificates.xlsx"
@@ -543,11 +542,8 @@ def process_single_project_all_reports(project_name):
             if not generate_summary_report(project_name, config, output_dir, db):
                 success = False
             
-            # 2. Detailed Progression Report (with dynamic counting)
-            if not generate_progression_report_full(project_name, config, output_dir, db):
-                success = False
-            
-            # 3. Condensed Progression Report (with dynamic counting)
+            # 2. Condensed Progression Report (with dynamic counting)
+            # Note: Detailed progression report disabled to reduce file output
             generate_condensed_report(project_name, config, output_dir, db, num_weeks=4)
             
             # 4. Certificate Report (if enabled)
@@ -677,12 +673,6 @@ def generate_specific_report_for_projects(report_type, project_names):
                 # Generate requested report (all use dynamic counting now)
                 if report_type == 'summary':
                     if generate_summary_report(project_name, config, output_dir, db):
-                        success_count += 1
-                    else:
-                        fail_count += 1
-                
-                elif report_type == 'progression':
-                    if generate_progression_report_full(project_name, config, output_dir, db):
                         success_count += 1
                     else:
                         fail_count += 1

@@ -38,6 +38,32 @@ ACCOMMODATION_SCHEDULE_CONFIG = {
         'remove_prefix': 'L',  # Remove "L" from "L01" -> "01"
         'remove_suffix': '',   # Remove suffix if needed
         'convert_to_int': True  # Convert "01" -> 1 (set False to keep as string)
+    },
+    
+    # Postal address extraction (optional) - DISABLED for this project
+    # Enable this when postal addresses become available in the accommodation schedule
+    'postal_address_extraction': {
+        'enabled': False,  # Set to True when addresses are available
+        'flat_no': {
+            'source_column': None,  # Specify column name when enabling
+            'extract_pattern': None
+        },
+        'address_line1': {
+            'source_column': None,
+            'extract_pattern': None,
+            'strip': True
+        },
+        'address_line2': {
+            'enabled': False
+        },
+        'city': {
+            'enabled': False
+        },
+        'postcode': {
+            'source_column': None,
+            'extract_pattern': None,
+            'strip': True
+        }
     }
 }
 
@@ -120,27 +146,6 @@ DRAWING_SETTINGS = {
     }
 } 
 
-# Certificate Settings
-CERTIFICATE_SETTINGS = {
-    'enabled': True,
-    # Report generation settings
-    'generate_report': True,  # Set to False to disable certificate report generation
-    'summary_label': 'P01-PXX (Certificates)',
-    'status_suffix': ' (Certificates)',
-    # File type filtering (Method 1)
-    'file_type_filter': {
-        'enabled': True,
-        'column_name': 'File Type',
-        'certificate_types': ['CE - Certificate (CE)']
-    },
-    # Doc Ref pattern filtering (Method 2)
-    'doc_ref_filter': {
-        'enabled': True,
-        'column_name': 'Doc Ref',
-        'certificate_patterns': ['CE']  # 2-letter codes to match in Doc Ref
-    }
-}
-
 # Technical Submittal Settings
 TECHNICAL_SUBMITTAL_SETTINGS = {
     'enabled': True,
@@ -193,11 +198,11 @@ PROJECT_STRUCTURE = {
             'phase': '18.02'
         },
         'C': {
-            'expected_floors': list(range(1, 4)),   # Floors 1-3
+            'expected_floors': list(range(1, 2)),   # Floors 1 (Townhouses)
             'phase': '18.02'
         },
         'D': {
-            'expected_floors': list(range(1, 4)),   # Floors 1-3
+            'expected_floors': list(range(1, 2)),   # Floors 1 (Townhouses)
             'phase': '18.03'
         },
         'E': {
@@ -272,9 +277,43 @@ STATUS_DISPLAY_ORDER = [
     'Review'
 ]
 
-# Certificate Tracking Configuration
+# ============================================================================
+# CERTIFICATE TRACKING - Consolidated certificate configuration
+# ============================================================================
 CERTIFICATE_TRACKING = {
-    # Phase/Block detection patterns (how to identify them in document metadata)
+    # Enable/disable certificate tracking and report generation
+    'enabled': True,
+    'generate_report': True,
+    
+    # Document detection - which documents ARE certificates?
+    'document_detection': {
+        # File type filtering - match by File Type column
+        'file_type_filter': {
+            'enabled': True,
+            'column_name': 'File Type',
+            'certificate_types': ['CE - Certificate (CE)']
+        },
+        # Doc Ref filtering - match by patterns in Doc Ref
+        'doc_ref_filter': {
+            'enabled': True,
+            'column_name': 'Doc Ref',
+            'patterns': ['CE']  # 2-letter codes to match in Doc Ref
+        },
+        # Path filtering - distinguish apartment vs communal certificates
+        'path_filter': {
+            'enabled': True,
+            # Include only certificates in block-specific folders (apartment certificates)
+            'include_patterns': [
+                r'\\Block\s*-\s*[A-G]\\',  # Match "\Block - A\", "\Block -B\", etc.
+            ],
+            # Exclude certificates in landlord/communal folders
+            'exclude_patterns': [
+                r'\\Landlords\\',  # Landlord/communal certificates
+            ]
+        }
+    },
+    
+    # Metadata extraction - extract phase/block from document metadata
     'phase_detection': {
         'patterns': [r'18\.02', r'18\.03'],  # Regex patterns to find phase in title/ref/path
         'doc_title_patterns': [r'Plot\s+(\d{2}\.\d{2})'],  # Extract phase from doc title
@@ -290,7 +329,7 @@ CERTIFICATE_TRACKING = {
         'doc_title_patterns': []  # Could extract from doc title if needed
     },
     
-    # Certificate categories to track
+    # Certificate categories to track (for apartment certificates)
     # NOTE: max_count is now automatically derived from ACCOMMODATION_DATA['total_apartments']
     'apartment_certificates': {
         'part_p': {
@@ -332,11 +371,6 @@ CERTIFICATE_TRACKING = {
     }
 } 
 
-
-
-
-
-
 # Accommodation Data - Imported from separate file
 # Run scripts/update_accommodation_data.py to regenerate
 from configs.accommodation_data.GreenwichPeninsula import ACCOMMODATION_DATA
@@ -352,6 +386,18 @@ APARTMENT_LAYOUT_TRACKING = {
         'exclude_patterns': ['Schedule', 'Detail', 'Section', 'Elevation'],
     },
     
+    # Block detection for layout drawings (same patterns as certificate tracking)
+    'block_detection': {
+        'patterns': [
+            r'\bBlock\s*-\s*([A-G])\b',  # Match "Block - A" or "Block -A" or "Block- A"
+            r'\bBlock\s+([A-G])\b',      # Match "Block A"
+            r'\bBlock\s+([A-G])\s*&',    # Match "Block G&F" or "Block F&G" (first block)
+            r'&\s*([A-G])\b',            # Match "Block G&F" or "Block F&G" (second block)
+            r'\b([A-G])\s+Block\b',      # Match "A Block"
+        ],
+        'doc_title_patterns': []  # More specific patterns for doc titles if needed
+    },
+    
     'categories': {
         'apartment_layouts': {
             'enabled': True,
@@ -359,24 +405,36 @@ APARTMENT_LAYOUT_TRACKING = {
             'layout_types': {
                 'ventilation': {
                     'display_name': 'Ventilation Apartment Layout',
-                    'patterns': ['Ventilation Apartment Layout'],
+                    'patterns': [
+                        'Ventilation Apartment Layout',
+                        'VENTILATION APARTMENT TYPE',  # Alternative format with TYPE instead of LAYOUT
+                        'Ventilation Apartment'  # More general pattern to catch variations
+                    ],
                     'doc_ref_patterns': [],  # Add specific doc ref patterns if needed
                     'required': True,
-                    'description': 'Ventilation apartment layout'
+                    'description': 'Ventilation apartment layout',
+                    # Greylist: apartment types that don't require this layout
+                    'greylisted_apartment_types': []  # e.g., ['1a', '2b'] - these types won't count as "missing"
                 },
                 'drainage': {
                     'display_name': 'Drainage & Domestic Services Apartment Layout',
                     'patterns': ['Drainage and Domestic Services Layout Apartment'],
                     'doc_ref_patterns': [],  # Add specific doc ref patterns if needed
                     'required': True,
-                    'description': 'Drainage and domestic services apartment layout'
+                    'description': 'Drainage and domestic services apartment layout',
+                    'greylisted_apartment_types': []
                 },
                 'kitchen_electrical': {
                     'display_name': 'Kitchen Electrical Setting Out',
-                    'patterns': ['Kitchen Electrical Setting Out - Type'],
+                    'patterns': [
+                        'Kitchen Electrical Setting Out - Type',
+                        'Kitchen Electrical Setting Out -Type',  # No space after dash
+                        'KITCHEN ELECTRICAL SETTING OUT'  # More general pattern to catch variations
+                    ],
                     'doc_ref_patterns': [],  # Add specific doc ref patterns if needed
                     'required': True,
-                    'description': 'Kitchen electrical setting out layout'
+                    'description': 'Kitchen electrical setting out layout',
+                    'greylisted_apartment_types': []
                 },
             },
             
@@ -407,21 +465,25 @@ APARTMENT_LAYOUT_TRACKING = {
                     'patterns': ['Mechanical services layout'],
                     'doc_ref_patterns': [],
                     'required': False,
-                    'description': 'Mechanical services communal layout'
+                    'description': 'Mechanical services communal layout',
+                    # Greylist: blocks that don't require this layout
+                    'greylisted_blocks': ['C', 'D']  
                 },
                 'communal_lighting_power': {
                     'display_name': 'Communal Lighting & Small Power Layout',
                     'patterns': ['COMMUNAL LIGHTING & SMALL POWER LAYOUT'],
                     'doc_ref_patterns': [],
                     'required': False,
-                    'description': 'Communal lighting and small power layout'
+                    'description': 'Communal lighting and small power layout',
+                    'greylisted_blocks': ['C', 'D']  
                 },
                 'above_ground_foul_rainwater': {
                     'display_name': 'Above Ground Foul & Rainwater Drainage Layout',
                     'patterns': ['ABOVE GROUND FOUL & RAINWATER DRAINAGE LAYOUT'],
                     'doc_ref_patterns': [],
                     'required': False,
-                    'description': 'Above ground foul and rainwater drainage layout'
+                    'description': 'Above ground foul and rainwater drainage layout',
+                    'greylisted_blocks': ['C', 'D']
                 },
                 'electrical_services': {
                     'display_name': 'Electrical Services Layout',
@@ -432,27 +494,31 @@ APARTMENT_LAYOUT_TRACKING = {
                     ],
                     'doc_ref_patterns': [],
                     'required': False,
-                    'description': 'Electrical services communal layout'
+                    'description': 'Electrical services communal layout',
+                    'greylisted_blocks': []  
                 },
                 'underfloor_heating': {
                     'display_name': 'Underfloor Heating Layout',
                     'patterns': ['UNDERFLOOR HEATING LAYOUT'],
                     'doc_ref_patterns': [],
                     'required': False,
-                    'description': 'Underfloor heating communal layout'
+                    'description': 'Underfloor heating communal layout',
+                    'greylisted_blocks': []
                 },
                 'mep_combined_services': {
                     'display_name': 'MEP Combined Services Layout',
                     'patterns': ['MEP Combined Services'],
                     'doc_ref_patterns': [],
                     'required': False,
-                    'description': 'MEP (Mechanical, Electrical, Plumbing) combined services layout'
+                    'description': 'MEP (Mechanical, Electrical, Plumbing) combined services layout',
+                    'greylisted_blocks': ['C', 'D']  
                 }
             },
             'coverage_detection': {
                 'floor_patterns': [
                     r'Level\s+(\d+)',  # Single level: "Level 01", "Level 15"
                     r'Level\s+(\d+)-(\d+)',  # Range: "Level 20-29"
+                    r'Level\s+(\d+)\s+to\s+Level\s+(\d+)',  # Range: "Level 02 to Level 05" (LEVEL repeated)
                     r'Level\s+(\d+)\s+to\s+(\d+)',  # Range: "Level 02 to 06"
                     r'Level\s+(\d+)\s*&\s*(\d+)',  # Multiple single levels: "Level 15 & 16"
                     r'Level\s+(\d+)-(\d+)\s*&\s*(\d+)',  # Range & single: "Level 03-13 & 14"
