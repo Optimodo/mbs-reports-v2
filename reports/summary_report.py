@@ -112,11 +112,9 @@ def save_excel_with_retry(summary_df, changes_df, latest_data_df, output_file, c
                 book.remove(book['Overall Summary'])
             overall_summary = book.create_sheet('Overall Summary', 0)  # Create at index 0 (first position)
             
-            # Set print layout: fit to 1 page, center, narrow margins
-            overall_summary.page_setup.fitToWidth = 1
-            overall_summary.page_setup.fitToHeight = 0
-            overall_summary.page_setup.horizontalCentered = True
-            overall_summary.page_setup.verticalCentered = True
+            # Apply print settings (portrait, fit to one page)
+            from utils.print_settings import apply_to_all_sheets
+            apply_to_all_sheets(book)
             overall_summary.page_margins = PageMargins(left=0.25, right=0.25, top=0.75, bottom=0.75, header=0.3, footer=0.3)
             # Extra reliability for centering
             overall_summary.sheet_properties.pageSetUpPr.horizontalCentered = True

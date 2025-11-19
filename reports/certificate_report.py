@@ -189,11 +189,13 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
     # Get summary statistics (will use accommodation data if available, even with 0 certs)
     summary = get_apartment_certificate_summary(categorized, apartment_certs, cert_tracking, accom_data, project_structure)
     
-    # Calculate end column based on max blocks (E + max_blocks_per_phase + 2 for spacing)
-    end_col = 5 + max_blocks_per_phase + 2  # Start at E (5), add blocks, add 2 for spacing
+    # Calculate end column based on actual table width (always K = 11 for consistency)
+    # Table structure: A=Certificate Type, B=Apartments, C=empty, D-K=Progress Bar
+    # All headers should match this width regardless of max_blocks_per_phase
+    end_col = 11  # Column K - consistent across all projects
     end_col_letter = get_column_letter(end_col)
     
-    # Section header - dynamic based on max blocks
+    # Section header - matches table width
     ws[f'A{start_row}'] = 'APARTMENT CERTIFICATE TRACKING'
     ws[f'A{start_row}'].font = Font(name='Calibri', size=14, bold=True, color='FFFFFF')
     ws[f'A{start_row}'].fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
@@ -208,8 +210,8 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
     # total_max_apartments is already summed across all certificate types, don't multiply again
     total_possible = overall['total_max_apartments']
     
-    # Calculate end column for progress bar (needed for header)
-    end_col = 5 + max_blocks_per_phase + 2  # Start at E (5), add blocks, add 2 for spacing
+    # Use same end_col as main header (K = 11) for consistency
+    # end_col_letter already defined above, no need to recalculate
     
     # Add header row for overall progress
     # Column A (empty but styled)
@@ -387,15 +389,15 @@ def add_apartment_certificate_tracking(ws, latest_data, config, start_row=5, max
         ws[f'A{start_row}'] = 'PROGRESS BY PHASE & BLOCK'
         ws[f'A{start_row}'].font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
         ws[f'A{start_row}'].fill = PatternFill(start_color='5B9BD5', end_color='5B9BD5', fill_type='solid')
-        # Merge header across all columns that will be used
-        end_col_letter = get_column_letter(end_col)
+        # Merge header across all columns - use same width as main header for consistency
+        # end_col_letter already defined above (K = 11), no need to recalculate
         ws.merge_cells(f'A{start_row}:{end_col_letter}{start_row}')
         start_row += 2
         
         for phase_id, phase_data in phase_block_progress.items():
             phase_display = phase_data['display_name']
             
-            # Phase header - dynamic width
+            # Phase header - matches main header width for consistency
             ws[f'A{start_row}'] = phase_display
             ws[f'A{start_row}'].font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
             ws[f'A{start_row}'].fill = PatternFill(start_color='5B9BD5', end_color='5B9BD5', fill_type='solid')
@@ -543,41 +545,41 @@ def add_data_quality_section(ws, latest_data, config, start_row=5):
         uncategorized = get_uncategorized_certificates_in_blocks(latest_data, categorized)
     else:
         uncategorized = pd.DataFrame()
-    
-    if uncategorized.empty:
-        if latest_data.empty:
-            ws[f'A{start_row}'] = '  ℹ No certificates to categorize yet'
-            ws[f'A{start_row}'].font = Font(name='Calibri', size=10, italic=True, color='666666')
+        
+        if uncategorized.empty:
+            if latest_data.empty:
+                ws[f'A{start_row}'] = '  ℹ No certificates to categorize yet'
+                ws[f'A{start_row}'].font = Font(name='Calibri', size=10, italic=True, color='666666')
+            else:
+                ws[f'A{start_row}'] = '  ✓ All certificates in block folders are properly categorized'
+                ws[f'A{start_row}'].font = Font(name='Calibri', size=10, italic=True, color='25E82C')
+                start_row += 2
         else:
-            ws[f'A{start_row}'] = '  ✓ All certificates in block folders are properly categorized'
-            ws[f'A{start_row}'].font = Font(name='Calibri', size=10, italic=True, color='25E82C')
-        start_row += 2
-    else:
-        ws[f'A{start_row}'] = '  Certificates in block folders but missing valid plot numbers (or certificate title/description):'
-        ws[f'A{start_row}'].font = Font(name='Calibri', size=10, italic=True)
-        start_row += 1
-        
-        # Count by block
-        block_counts = uncategorized['extracted_block'].value_counts().sort_index()
-        ws[f'A{start_row}'] = f'  Total Uncategorized:'
-        ws[f'B{start_row}'] = len(uncategorized)
-        ws[f'A{start_row}'].font = Font(name='Calibri', size=10, bold=True)
-        ws[f'B{start_row}'].font = Font(name='Calibri', size=10, bold=True, color='C00000')
-        start_row += 1
-        
-        for block, count in block_counts.items():
-            ws[f'A{start_row}'] = f'    Block {block}:'
-            ws[f'B{start_row}'] = count
-            ws[f'A{start_row}'].font = Font(name='Calibri', size=9)
-            ws[f'B{start_row}'].font = Font(name='Calibri', size=9, color='C00000')
+            ws[f'A{start_row}'] = '  Certificates in block folders but missing valid plot numbers (or certificate title/description):'
+            ws[f'A{start_row}'].font = Font(name='Calibri', size=10, italic=True)
             start_row += 1
-        
-        start_row += 1
-        
-        # Note about detailed uncategorized report
-        ws[f'A{start_row}'] = '  Detailed uncategorized certificates moved to separate tab for analysis'
-        ws[f'A{start_row}'].font = Font(name='Calibri', size=9, italic=True, color='666666')
-        ws.merge_cells(f'A{start_row}:D{start_row}')
+            
+            # Count by block
+            block_counts = uncategorized['extracted_block'].value_counts().sort_index()
+            ws[f'A{start_row}'] = f'  Total Uncategorized:'
+            ws[f'B{start_row}'] = len(uncategorized)
+            ws[f'A{start_row}'].font = Font(name='Calibri', size=10, bold=True)
+            ws[f'B{start_row}'].font = Font(name='Calibri', size=10, bold=True, color='C00000')
+            start_row += 1
+            
+            for block, count in block_counts.items():
+                ws[f'A{start_row}'] = f'    Block {block}:'
+                ws[f'B{start_row}'] = count
+                ws[f'A{start_row}'].font = Font(name='Calibri', size=9)
+                ws[f'B{start_row}'].font = Font(name='Calibri', size=9, color='C00000')
+                start_row += 1
+            
+            start_row += 1
+            
+            # Note about detailed uncategorized report
+            ws[f'A{start_row}'] = '  Detailed uncategorized certificates moved to separate tab for analysis'
+            ws[f'A{start_row}'].font = Font(name='Calibri', size=9, italic=True, color='666666')
+            ws.merge_cells(f'A{start_row}:D{start_row}')
         start_row += 1
     
     start_row += 2
@@ -741,12 +743,9 @@ def save_certificate_report(summary_df, latest_data, output_file, config):
             del wb['Overall Summary']
         overall_summary = wb.create_sheet('Overall Summary', 0)
         
-        # Set up page layout for A4 landscape
-        overall_summary.page_setup.orientation = 'landscape'
-        overall_summary.page_setup.paperSize = 9  # A4
-        overall_summary.page_setup.fitToWidth = 1
-        overall_summary.page_setup.fitToHeight = 0
-        overall_summary.page_margins = PageMargins(left=0.5, right=0.5, top=0.75, bottom=0.75)
+        # Apply print settings (portrait, fit to one page)
+        from utils.print_settings import apply_to_all_sheets
+        apply_to_all_sheets(wb)
         
         # Add title and project info
         project_title = config.get('PROJECT_TITLE', 'Project')

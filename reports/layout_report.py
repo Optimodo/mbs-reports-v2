@@ -1281,10 +1281,9 @@ def save_layout_report(latest_data, output_file, config):
             # Add uncategorized tab
             add_uncategorized_tab(wb, layout_summary)
         
-        # Page setup for printing
-        ws.page_setup.orientation = 'landscape'
-        ws.page_setup.paperSize = 9  # A4
-        ws.print_options.horizontalCentered = True
+        # Apply print settings (portrait, fit to one page)
+        from utils.print_settings import apply_to_all_sheets
+        apply_to_all_sheets(wb)
         
         # Save workbook
         wb.save(output_file)

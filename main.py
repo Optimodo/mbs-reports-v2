@@ -507,11 +507,13 @@ def generate_layout_report_full(project_name, config, output_dir, db):
         return False
 
 
-def process_single_project_all_reports(project_name):
+def process_single_project_all_reports(project_name, convert_to_pdf: bool = True):
     """Generate all reports for a single project.
     
     Args:
         project_name: Name of the project
+        convert_to_pdf: If True, converts reports to PDF. If False, skips PDF conversion.
+                       Should be False when called from process_all_projects_all_reports()
         
     Returns:
         bool: True if successful
@@ -558,6 +560,14 @@ def process_single_project_all_reports(project_name):
             else:
                 print(f"\n⚠ Some reports failed for {project_name}")
             
+            # Convert Excel reports to PDF for this project only (if requested)
+            if convert_to_pdf:
+                try:
+                    from utils.pdf_generator import convert_reports_to_pdf
+                    convert_reports_to_pdf(output_dir, project_name=project_name, verbose=True)
+                except Exception as e:
+                    print(f"  ⚠ PDF conversion failed: {str(e)}")
+            
             return success
             
     except Exception as e:
@@ -601,7 +611,8 @@ def process_all_projects_all_reports():
         fail_count = 0
         
         for project_name in projects:
-            if process_single_project_all_reports(project_name):
+            # Don't convert to PDF per project - do it at the end for all projects
+            if process_single_project_all_reports(project_name, convert_to_pdf=False):
                 success_count += 1
             else:
                 fail_count += 1
@@ -614,6 +625,14 @@ def process_all_projects_all_reports():
         if fail_count > 0:
             print(f"✗ Failed: {fail_count} projects")
         print(f"{'='*60}")
+        
+        # Convert Excel reports to PDF for all projects
+        output_dir = Path('output')
+        try:
+            from utils.pdf_generator import convert_reports_to_pdf
+            convert_reports_to_pdf(output_dir, verbose=True)
+        except Exception as e:
+            print(f"  ⚠ PDF conversion failed: {str(e)}")
 
 
 def generate_specific_report_for_projects(report_type, project_names):
@@ -711,6 +730,13 @@ def generate_specific_report_for_projects(report_type, project_names):
     if fail_count > 0:
         print(f"✗ Failed: {fail_count}")
     print(f"{'='*60}")
+    
+    # Convert Excel reports to PDF
+    try:
+        from utils.pdf_generator import convert_reports_to_pdf
+        convert_reports_to_pdf(output_dir, verbose=True)
+    except Exception as e:
+        print(f"  ⚠ PDF conversion failed: {str(e)}")
 
 
 def main():

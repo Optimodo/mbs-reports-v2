@@ -72,9 +72,22 @@ def generate_condensed_progression_report(summary_df, output_file, config, lates
                     date_cell.font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
                     date_cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
                     
+                    # Apply print settings (portrait, fit to one page)
+                    from utils.print_settings import apply_to_all_sheets
+                    apply_to_all_sheets(book)
+                    
                     book.save(output_file)
             except Exception as e:
                 print(f"Warning: Could not apply monthly column formatting: {e}")
+    
+    # Apply print settings one final time after all columns are added
+    try:
+        book = load_workbook(output_file)
+        from utils.print_settings import apply_to_all_sheets
+        apply_to_all_sheets(book)
+        book.save(output_file)
+    except Exception as e:
+        print(f"Warning: Could not apply print settings: {e}")
     
     return True
 
@@ -873,6 +886,10 @@ def generate_progression_report(summary_df, output_file, config, latest_data_df=
             
             adjusted_width = max(8, max_length + 2)
             sheet.column_dimensions[column_letter].width = adjusted_width
+        
+        # Apply print settings (portrait, fit to one page)
+        from utils.print_settings import apply_to_all_sheets
+        apply_to_all_sheets(wb)
         
         # Save the workbook
         wb.save(output_file)

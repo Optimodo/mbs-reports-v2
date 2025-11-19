@@ -99,11 +99,11 @@ def extract_apartment_number(doc_title: str, doc_ref: str = "", doc_path: str = 
         # - Apartment certificates: \18.XX\Block - X\ (INCLUDE these - any cert type folder within blocks)
         if '\\Landlords\\' in doc_path or '/Landlords/' in doc_path:
             return None
-        
-        # Only process documents that are in block-specific folders (apartment certificates)
-        # Must be in format: \18.XX\Block - X\ (where X is A, B, C, D, E, F, G)
-        if not re.search(r'\\Block\s*-\s*[A-G]\\', doc_path):
-            return None
+    
+    # Only process documents that are in block-specific folders (apartment certificates)
+    # Must be in format: \18.XX\Block - X\ (where X is A, B, C, D, E, F, G)
+    if not re.search(r'\\Block\s*-\s*[A-G]\\', doc_path):
+        return None
     
     # GENERIC APPROACH: For all certificates in block folders, we're more lenient
     # Certificates might be misnamed but we still want to count them if they're in block folders
@@ -1126,8 +1126,8 @@ def categorize_layouts(df: pd.DataFrame, layout_tracking_config: Dict,
         if result_df.loc[idx, 'category'] == 'apartment' and pd.isna(result_df.loc[idx, 'block']):
             block_detection_config = layout_tracking_config.get('block_detection', {})
             block = extract_block(doc_title, doc_ref, doc_path, block_detection_config)
-            if block:
-                result_df.loc[idx, 'block'] = block
+        if block:
+            result_df.loc[idx, 'block'] = block
     
     return result_df
 
